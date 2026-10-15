@@ -177,4 +177,32 @@ class FrameTests(unittest.TestCase):
         for name in ('..%2Fprivate.txt','link.txt','..'):
             with self.assertRaises(urllib.error.HTTPError):self.request('/api/files/download?name='+name)
 
+    def test_nested_folder_upload_download_and_video_visibility(self):
+        self.request('/api/files/folder',{'name':'Personal','folder':''}).close()
+        self.request('/api/files/folder',{'name':'Videos','folder':'Personal'}).close()
+        def upload(name,choice):
+            req=urllib.request.Request(self.base+'/api/files/upload?folder=Personal%2FVideos&name='+name+'&frame='+choice,data=b'video')
+            with urllib.request.urlopen(req) as r:return json.load(r)
+        upload('private.mp4','false');upload('movie.mkv','true')
+        server.scan();server.init();server.scan()
+        titles=[m['title'] for m in json.load(self.request('/api/movies'))]
+        self.assertNotIn('private',titles);self.assertIn('movie',titles)
+        rows=json.load(self.request('/api/files?folder=Personal%2FVideos'))
+        self.assertEqual({f['name']:f['movie'] for f in rows},{'private.mp4':False,'movie.mkv':True})
+        with self.request('/api/files/download?folder=Personal%2FVideos&name=private.mp4') as r:self.assertEqual(r.read(),b'video')
+        self.assertTrue(next(f for f in json.load(self.request('/api/files')) if f['name']=='Personal')['directory'])
+        duplicate=upload('private.mp4','true')['filename']
+        self.assertNotEqual(duplicate,'private.mp4')
+        self.assertFalse(next(f for f in json.load(self.request('/api/files?folder=Personal%2FVideos')) if f['name']=='private.mp4')['movie'])
+
+    def test_video_choice_required_and_bad_folders_rejected(self):
+        with self.assertRaises(urllib.error.HTTPError):
+            urllib.request.urlopen(urllib.request.Request(self.base+'/api/files/upload?name=private.mp4',data=b'video'))
+        self.assertFalse((server.MEDIA/'private.mp4').exists())
+        (server.MEDIA/'escape').symlink_to(Path(self.tmp.name),target_is_directory=True)
+        for folder in ('../','escape','/tmp','missing'):
+            with self.assertRaises(urllib.error.HTTPError):self.request('/api/files/folder',{'folder':folder,'name':'x'})
+        with self.assertRaises(urllib.error.HTTPError):self.request('/api/files/folder',{'name':'../escape'})
+        with self.assertRaises(urllib.error.HTTPError):self.request('/api/files/folder',{'name':'x'}, {'Origin':'https://other.example'})
+
 if __name__=='__main__':unittest.main()

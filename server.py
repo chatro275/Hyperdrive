@@ -6,7 +6,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlsplit, parse_qs, quote
 from updater import Updater, MAX_ARCHIVE
 from voice import parse_command, search_web
-from storage import require_storage, file_path
+from storage import require_storage, file_path, directory_path
 
 ROOT = Path(__file__).resolve().parent
 DB = ROOT / 'library.db'
@@ -72,6 +72,7 @@ def connect():
 def init():
     with connect() as c:
         c.execute('CREATE TABLE IF NOT EXISTS movies (id INTEGER PRIMARY KEY, path TEXT UNIQUE, title TEXT, genre TEXT DEFAULT "Unsorted", year TEXT DEFAULT "", favorite INTEGER DEFAULT 0, progress REAL DEFAULT 0)')
+        c.execute('CREATE TABLE IF NOT EXISTS frame_visibility (path TEXT PRIMARY KEY, visible INTEGER NOT NULL)')
 
 def scan():
     count = 0
@@ -79,10 +80,12 @@ def scan():
     if not MEDIA.is_dir():
         raise ValueError('Media folder does not exist: ' + str(MEDIA))
     with LOCK, connect() as c:
+        hidden={r['path'] for r in c.execute('SELECT path FROM frame_visibility WHERE visible=0')}
         for p in MEDIA.rglob('*'):
             if p.suffix.lower() not in VIDEO_TYPES or not p.is_file(): continue
             p = p.resolve()
             if not p.is_relative_to(MEDIA): continue
+            if str(p.relative_to(MEDIA)) in hidden:continue
             year = re.search(r'\b(19\d{2}|20\d{2})\b', p.stem)
             title = re.sub(r'[._]', ' ', p.stem)
             if year: title = title[:year.start()].strip(' -([')
@@ -209,10 +212,18 @@ class Handler(BaseHTTPRequestHandler):
                 if route=='/api/storage':
                     disk=shutil.disk_usage(MEDIA)
                     return self.json({'available':True,'usb':bool(os.environ.get('HYPERDRIVE_USB_MOUNT')),'free':disk.free,'total':disk.total})
+                query=parse_qs(urlsplit(self.path).query)
+                folder=directory_path(MEDIA,query.get('folder',[''])[0])
                 if route=='/api/files':
-                    return self.json([{'name':p.name,'size':p.stat().st_size,'movie':p.suffix.lower() in VIDEO_TYPES} for p in sorted(MEDIA.iterdir(),key=lambda p:p.name.lower()) if p.is_file() and not p.is_symlink() and not (p.name.startswith('.upload-') and p.name.endswith('.part'))])
-                name=parse_qs(urlsplit(self.path).query).get('name',[''])[0]
-                return self.file(file_path(MEDIA,name),attachment=name)
+                    with connect() as c:shown={r['path'] for r in c.execute('SELECT path FROM movies')}
+                    entries=[]
+                    for p in sorted(folder.iterdir(),key=lambda p:(not p.is_dir(),p.name.lower())):
+                        if p.is_symlink() or (p.name.startswith('.upload-') and p.name.endswith('.part')):continue
+                        if not p.is_dir() and not p.is_file():continue
+                        entries.append({'name':p.name,'size':0 if p.is_dir() else p.stat().st_size,'directory':p.is_dir(),'movie':str(p.resolve()) in shown})
+                    return self.json(entries)
+                name=query.get('name',[''])[0]
+                return self.file(file_path(folder,name),attachment=name)
             except (ValueError,OSError) as exc:return self.json({'error':str(exc)},503 if route!='/api/files/download' else 400)
         if route == '/api/health':return self.json(HEALTH.snapshot())
         if route == '/api/movies':
@@ -264,6 +275,14 @@ class Handler(BaseHTTPRequestHandler):
             if size > 8192: return self.json({'error':'Request too large'}, 413)
             data = json.loads(self.rfile.read(size) or b'{}')
             if not isinstance(data, dict): raise ValueError('Expected a JSON object')
+            if route == '/api/files/folder':
+                require_storage(MEDIA)
+                parent=directory_path(MEDIA,data.get('folder',''))
+                name=data.get('name')
+                if not isinstance(name,str):raise ValueError('Enter a folder name')
+                target=file_path(parent,name)
+                with LOCK:target.mkdir()
+                return self.json({'ok':True,'folder':target.relative_to(MEDIA).as_posix()})
             if route == '/api/health/check':return self.json(HEALTH.check())
             if route == '/api/health/settings':
                 if type(data.get('auto_recovery')) is not bool:raise ValueError('Expected auto_recovery true or false')
@@ -368,18 +387,24 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
         except (ValueError, TypeError, KeyError, OSError) as e: self.json({'error':str(e)},400)
     def upload(self, size, all_types=False):
-        name = parse_qs(urlsplit(self.path).query).get('name', [''])[0]
+        query=parse_qs(urlsplit(self.path).query)
+        name = query.get('name', [''])[0]
         if not name or '/' in name or '\\' in name or len(name.encode()) > 200 or any(ord(c) < 32 for c in name):
             raise ValueError('Invalid filename')
         require_storage(MEDIA)
-        file_path(MEDIA,name)
+        folder=directory_path(MEDIA,query.get('folder',[''])[0]) if all_types else MEDIA
+        file_path(folder,name)
+        video=Path(name).suffix.lower() in VIDEO_TYPES
+        choice=query.get('frame',[''])[0]
+        if all_types and video and choice not in ('true','false'):raise ValueError('Choose whether this video should appear in Frame')
+        visible=not all_types or choice=='true'
         if not all_types and Path(name).suffix.lower() not in VIDEO_TYPES: raise ValueError('Choose a video file')
         if size < (0 if all_types else 1) or size > 100 * 1024**3: raise ValueError('File exceeds the 100 GB upload limit')
         if shutil.disk_usage(MEDIA).free < size + 256 * 1024**2: raise ValueError('Not enough free space on the Pi')
         temp = None
         self.connection.settimeout(120)
         try:
-            with tempfile.NamedTemporaryFile(dir=MEDIA, prefix='.upload-', suffix='.part', delete=False) as f:
+            with tempfile.NamedTemporaryFile(dir=folder, prefix='.upload-', suffix='.part', delete=False) as f:
                 temp = Path(f.name)
                 remaining = size
                 while remaining:
@@ -389,10 +414,16 @@ class Handler(BaseHTTPRequestHandler):
                     f.write(block); remaining -= len(block)
             with LOCK:
                 require_storage(MEDIA)
-                dest = file_path(MEDIA,name)
-                if dest.exists(): dest = MEDIA / (Path(name).stem + '-' + uuid.uuid4().hex[:8] + Path(name).suffix)
-                temp.replace(dest)
-            if dest.suffix.lower() in VIDEO_TYPES:scan()
+                directory_path(MEDIA,folder.relative_to(MEDIA).as_posix() if folder!=MEDIA else '')
+                dest = file_path(folder,name)
+                if dest.exists(): dest = folder / (Path(name).stem + '-' + uuid.uuid4().hex[:8] + Path(name).suffix)
+                if video:
+                    with connect() as c:
+                        c.execute('INSERT OR REPLACE INTO frame_visibility(path,visible) VALUES(?,?)',(dest.relative_to(MEDIA).as_posix(),int(visible)))
+                        c.commit()
+                        temp.replace(dest)
+                else:temp.replace(dest)
+            if video and visible:scan()
             self.json({'ok': True, 'filename': dest.name})
         finally:
             if temp is not None: temp.unlink(missing_ok=True)

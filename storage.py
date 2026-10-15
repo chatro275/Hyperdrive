@@ -26,3 +26,13 @@ def file_path(media,name):
     root=Path(media).resolve();path=root/name
     if path.is_symlink() or not path.resolve().is_relative_to(root):raise ValueError('Unsafe file path')
     return path
+
+
+def directory_path(media, relative=''):
+    if not isinstance(relative,str) or len(relative)>2000:raise ValueError('Invalid folder path')
+    root=Path(media).resolve();current=root
+    if relative:
+        for part in relative.split('/'):
+            current=file_path(current,part)
+            if not current.is_dir():raise ValueError('Folder does not exist')
+    return current

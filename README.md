@@ -238,3 +238,7 @@ Install `frame-update-2.3.0.zip` using the dashboard updater and restart the Pi.
 ## Frame 2.4.1 interface
 
 Frame opens directly to movies, with a compact layout matching Hyperdrive. The TV has Movies, Filter, Settings and Back to Hyperdrive controls. Sound, refresh, updates and power are in Settings. The web library has an explicit Back to Hyperdrive link; microphone, sound and management controls are in Settings. Install frame-update-2.4.1.zip through the existing 2.4 updater, approve on TV and restart the Pi.
+
+## Folders and movie visibility (2.6)
+
+Hyperdrive Files supports creating and browsing nested folders, uploading into the current folder and downloading files within it. Each supported video upload asks Show in Frame or Files only, with a separate cancel action. Files-only choices persist across restarts and library scans. Existing movies stay visible. Uploads made through Frame itself still go directly into its library. This release does not add moving/deleting folders or uploading whole directory trees.
