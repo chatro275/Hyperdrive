@@ -1,0 +1,26 @@
+library.db
+movies/
+__pycache__/
+*.pyc
+frame.env
+frame-kodi.zip
+.updates/
+frame-update-*.zip
+
+script.frame-*.zip
+.voice-venv/
+models/
+voice.env
+voice-settings.json
+
+# Device data and generated releases never belong in GitHub.
+*.db
+*.db-*
+*.env
+*.env.*
+health-history.json
+hyperdrive-kodi.zip
+script.hyperdrive-*.zip
+frame-updater-bootstrap-*.zip
+script.frame/
+.DS_Store

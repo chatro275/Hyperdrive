@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<addon id="script.frame" name="Frame Cinema" version="2.5.0" provider-name="Frame">
+  <requires><import addon="xbmc.python" version="3.0.0"/></requires>
+  <extension point="xbmc.python.script" library="default.py"><provides>executable</provides></extension>
+  <extension point="xbmc.service" library="service.py"/>
+  <extension point="xbmc.addon.metadata"><summary lang="en_GB">Your own little cinema</summary><description lang="en_GB">A remote-friendly local movie library. Upload films from the Frame portal, then watch on your TV.</description><platform>all</platform><license>MIT</license></extension>
+</addon>
