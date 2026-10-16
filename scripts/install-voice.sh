@@ -17,7 +17,7 @@ python3 -m venv .voice-venv
 mkdir -p "$HOME/.config/systemd/user"
 cat > "$HOME/.config/systemd/user/frame-voice.service" <<EOF
 [Unit]
-Description=Hey Frame offline microphone
+Description=Hey Hyper offline microphone
 After=pipewire.service pipewire-pulse.service
 
 [Service]
@@ -33,6 +33,6 @@ EOF
 systemctl --user daemon-reload
 systemctl --user enable --now frame-voice.service
 systemctl --user restart frame-voice.service
-printf '\nHey Frame installed. Check microphone status in the Frame portal.\n'
+printf '\nHey Hyper installed. Check microphone status in the Frame portal.\n'
 printf 'If the wrong microphone is selected, set FRAME_MIC_DEVICE in voice.env and restart frame-voice.\n'
 printf 'The model is now local. Internet is only used for explicit web-search commands.\n'

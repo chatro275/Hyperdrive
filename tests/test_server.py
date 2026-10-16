@@ -205,4 +205,44 @@ class FrameTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError):self.request('/api/files/folder',{'name':'../escape'})
         with self.assertRaises(urllib.error.HTTPError):self.request('/api/files/folder',{'name':'x'}, {'Origin':'https://other.example'})
 
+    def test_hyper_storage_and_watchlist_commands(self):
+        server.VOICE_PENDING.clear()
+        self.request('/api/voice/settings',{'enabled':True}).close()
+        self.request('/api/voice/command',{'text':'create folder called Holidays'}).close()
+        self.assertTrue((server.MEDIA/'Holidays').is_dir())
+        result=json.load(self.request('/api/voice/command',{'text':'storage space'}));self.assertIn('GB free',result['message'])
+        result=json.load(self.request('/api/voice/command',{'text':'list folders'}));self.assertIn('Holidays',result['message'])
+        with self.assertRaises(urllib.error.HTTPError):self.request('/api/voice/command',{'text':'create folder called ../escape'})
+        server.scan()
+        self.request('/api/voice/command',{'text':'add Example to watchlist'}).close()
+        self.assertEqual(json.load(self.request('/api/movies'))[0]['favorite'],1)
+        self.request('/api/voice/settings',{'enhancement':'strong'}).close()
+        self.assertEqual(json.load(self.request('/api/voice'))['settings']['enhancement'],'strong')
+        with self.assertRaises(urllib.error.HTTPError):self.request('/api/voice/settings',{'enhancement':'invalid'})
+
+    def test_voice_move_requires_confirmation_and_preserves_movie(self):
+        server.VOICE_PENDING.clear();server.scan()
+        self.request('/api/voice/settings',{'enabled':True}).close()
+        (server.MEDIA/'Holidays').mkdir()
+        original=server.MEDIA/'Example.2024.mp4'
+        self.request('/api/voice/command',{'text':'move file example 2024 mp4 to folder holidays'}).close()
+        pending=json.load(self.request('/api/voice'))['pending_storage']
+        self.assertTrue(original.exists())
+        with self.assertRaises(urllib.error.HTTPError):self.request('/api/voice/storage/confirm',{'token':'wrong'})
+        self.request('/api/voice/storage/confirm',{'token':pending['token']}).close()
+        self.assertFalse(original.exists());self.assertTrue((server.MEDIA/'Holidays/Example.2024.mp4').exists())
+        with server.connect() as c:self.assertEqual(c.execute('SELECT path FROM movies').fetchone()['path'],str(server.MEDIA/'Holidays/Example.2024.mp4'))
+        with self.assertRaises(urllib.error.HTTPError):self.request('/api/voice/storage/confirm',{'token':pending['token']})
+
+    def test_voice_move_changed_source_and_expiry_rejected(self):
+        server.VOICE_PENDING.clear()
+        self.request('/api/voice/settings',{'enabled':True}).close()
+        self.request('/api/voice/command',{'text':'rename file Example.2024.mp4 to Renamed'}).close()
+        pending=json.load(self.request('/api/voice'))['pending_storage']
+        (server.MEDIA/'Example.2024.mp4').write_bytes(b'changed')
+        with self.assertRaises(urllib.error.HTTPError):self.request('/api/voice/storage/confirm',{'token':pending['token']})
+        server.VOICE_PENDING['expires']=0
+        with self.assertRaises(urllib.error.HTTPError):self.request('/api/voice/storage/confirm',{'token':pending['token']})
+        self.assertTrue((server.MEDIA/'Example.2024.mp4').exists())
+
 if __name__=='__main__':unittest.main()

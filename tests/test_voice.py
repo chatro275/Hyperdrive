@@ -36,3 +36,37 @@ class VoiceTests(unittest.TestCase):
     def test_search_feed_extracts_results_without_executing_markup(self):
         results=parse_search_feed(b'<rss><channel><item><title>Test</title><link>https://example.com</link><description>&lt;b&gt;Snippet&lt;/b&gt;</description></item><item><link>javascript:bad</link></item></channel></rss>')
         self.assertEqual(results,[{'title':'Test','url':'https://example.com','snippet':'Snippet'}])
+
+    def test_hyper_wake_and_legacy_alias(self):
+        gate=WakeGate()
+        self.assertEqual(gate.feed('hey hyper storage space',100),'storage space')
+        self.assertEqual(gate.feed('hey high per pause',101),'pause')
+        self.assertIsNone(gate.feed('they said hey hyper stop',102))
+        self.assertEqual(gate.feed('hey hyper',103),'__listening__')
+        self.assertEqual(gate.feed('list files',104),'list files')
+        self.assertIsNone(gate.feed('stop',105))
+
+    def test_expanded_playback_and_storage_commands(self):
+        for phrase,action in [('storage space','storage_space'),('list files','list_files'),('list folders','list_folders'),('subtitles on','subtitles_on'),('start over','restart_movie'),('open hyperdrive','hyperdrive')]:
+            self.assertEqual(parse_command(phrase,[])['action'],action)
+        self.assertEqual(parse_command('create folder called Holidays',[])['name'],'Holidays')
+        self.assertEqual(parse_command('list files in Holidays',[])['name'],'Holidays')
+        self.assertEqual(parse_command('skip forward thirty seconds',[]),{'action':'seek_seconds','value':30})
+        with self.assertRaises(ValueError):parse_command('skip forward 99999 seconds',[])
+        self.assertTrue(parse_command('add dune to watchlist',[{'id':2,'title':'Dune'}])['favorite'])
+
+    def test_enhancer_quiet_speech_clipping_and_silence(self):
+        from voice import AudioEnhancer
+        from array import array
+        import math
+        quiet=array('h',(int(300*math.sin(2*math.pi*500*n/16000)) for n in range(4000))).tobytes()
+        enhancer=AudioEnhancer(16000)
+        for _ in range(10):output=array('h',enhancer.process(quiet))
+        self.assertGreater(max(output),600)
+        self.assertLessEqual(max(output),28000)
+        self.assertLessEqual(enhancer.metrics['gain'],4)
+        original=AudioEnhancer(16000,'off');self.assertEqual(original.process(quiet),quiet)
+        silence=bytes(8000);self.assertEqual(AudioEnhancer(16000).process(silence),silence)
+        loud=array('h',[32767]*4000).tobytes();processed=array('h',enhancer.process(loud))
+        self.assertEqual(enhancer.metrics['clipped'],100)
+        self.assertTrue(all(-32768<=x<=32767 for x in processed))

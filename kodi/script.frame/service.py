@@ -56,6 +56,15 @@ class Playback(xbmc.Player):
             state=audio_status()
             if state.get('passthrough'):raise ValueError('Use TV or receiver volume while passthrough is enabled')
             rpc('Application.SetVolume',volume=max(0,min(100,state['volume']+(5 if action=='volume_up' else -5))))
+        elif action in ('seek_forward','seek_backward','seek_seconds','restart_movie'):
+            if not self.isPlayingVideo():raise ValueError('Start a movie first')
+            offset=command.get('value',30 if action=='seek_forward' else -30)
+            target=0 if action=='restart_movie' else max(0,min(self.getTotalTime()-1,self.getTime()+offset))
+            self.seekTime(target)
+        elif action in ('subtitles_on','subtitles_off'):
+            video=next((p for p in rpc('Player.GetActivePlayers') if p['type']=='video'),None)
+            if not video:raise ValueError('Start a movie first')
+            rpc('Player.SetSubtitle',playerid=video['playerid'],subtitle='on' if action=='subtitles_on' else 'off')
         elif action == 'stop': self.stop()
         elif action == 'volume':
             if audio_status().get('passthrough'):raise ValueError('Use TV or receiver volume while passthrough is enabled')
@@ -65,8 +74,8 @@ class Playback(xbmc.Player):
         elif action == 'audio_settings': xbmc.executebuiltin('ActivateWindow(systemsettings)')
         elif action == 'airplay_settings': xbmc.executebuiltin('ActivateWindow(servicesettings)')
         elif action in ('updates', 'power_menu', 'audio_setup', 'audio_test', 'voice_results'): xbmc.executebuiltin('RunScript(script.frame,{})'.format(action))
-        elif action == 'voice_listening': xbmcgui.Dialog().notification('Hey Frame', 'Listening for a command…', time=2500)
-        elif action == 'voice_feedback': xbmcgui.Dialog().notification('Hey Frame', command['message'], time=5000)
+        elif action == 'voice_listening': xbmcgui.Dialog().notification('Hey Hyper', 'Listening for a command…', time=2500)
+        elif action == 'voice_feedback': xbmcgui.Dialog().notification('Hey Hyper', command['message'], time=5000)
         elif action in ('reboot', 'shutdown'):
             self.save()
             execute_power(action)

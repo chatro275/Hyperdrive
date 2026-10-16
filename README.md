@@ -242,3 +242,21 @@ Frame opens directly to movies, with a compact layout matching Hyperdrive. The T
 ## Folders and movie visibility (2.6)
 
 Hyperdrive Files supports creating and browsing nested folders, uploading into the current folder and downloading files within it. Each supported video upload asks Show in Frame or Files only, with a separate cancel action. Files-only choices persist across restarts and library scans. Existing movies stay visible. Uploads made through Frame itself still go directly into its library. This release does not add moving/deleting folders or uploading whole directory trees.
+
+
+## Hey Hyper (2.7)
+
+Say **Hey Hyper**, followed by a command, then pause briefly. The old Hey Frame name remains an alias. A standalone wake phrase opens an eight-second window for one command. Recognition stays offline, with on-screen feedback; there is no spoken reply. Internet is used only for explicit web search and software releases.
+
+Hyperdrive home → Microphone & voice controls opens the configuration. Enhancement modes are Off, Balanced (up to 4× gain) and Strong (up to 8× gain). A 70 Hz high-pass filter reduces rumble/DC, a 3.6 kHz low-pass filter reduces high-frequency noise, and gain is bounded by output peaks. Near-silence is not boosted. This is lightweight speech-band filtering, not AI denoising or acoustic echo cancellation. Loud TV audio, heavily clipped recordings, and inaudible speech still need a quieter room or better mic placement. Compare Off and Balanced on your actual mic; Strong may amplify room noise too. RMS, clipping percentage and dropped capture blocks are visible in settings. No ambient transcripts or recordings are saved. Command requests run separately from audio recognition so a web search does not block capture.
+
+Supported examples:
+
+- “Hey Hyper, play Interstellar”, “pause”, “resume”, “stop”, “start over”, “play a random movie”, “continue watching” (chooses the first unfinished title alphabetically).
+- “Skip forward thirty seconds”, “go back”, “subtitles on/off”, “volume up/down”, “set volume to fifty”, “mute/unmute”, “what is playing”, “open Frame”, “open Hyperdrive”.
+- “Add Interstellar to watchlist”, “remove Interstellar from watchlist”, “scan movies”.
+- “Storage space”, “list files”, “list folders”, “list files in Holidays”, “find files called holiday”, “create folder called Holidays”. Folder creation is in the storage root. Listing returns up to ten entries; search examines at most 10,000 entries.
+- “Move file Example.mp4 to folder Holidays”, “rename file Example.mp4 to New name”. These require one unambiguous filename including its extension. Review the exact paths in the microphone panel and confirm within two minutes; nothing moves until then. Existing destinations are never intentionally overwritten; stale requests and changed source files are rejected. Stop playback before confirming. Movie library paths and Files-only visibility are preserved. Deletion/formatting are not voice commands.
+- “Help”, “search the web for a topic”.
+
+The software does not guarantee recognition with every microphone. Automated checks exercise synthetic audio, command parsing and storage confirmation; speech accuracy and CEC/audio still require Pi hardware testing. No new speech dependencies are needed. Install the GitHub update and restart the Pi to load the new worker and Kodi code.

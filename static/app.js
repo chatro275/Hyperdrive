@@ -57,9 +57,12 @@ async function updateStatus(){try{const u=await api('/api/update');$('#update-st
 $('#update-file').onchange=async e=>{const f=e.target.files[0];if(!f)return;e.target.disabled=true;try{if(f.size>10*1024*1024)throw Error('Choose an update ZIP under 10 MB');$('#update-state').textContent='Uploading and checking update…';const r=await fetch('/api/update/stage',{method:'POST',headers:{'Content-Type':'application/zip'},body:f});const result=await r.json();if(!r.ok)throw Error(result.error);toast('Update ready. Approve installation on your TV.');}catch(err){toast(err.message);}finally{e.target.disabled=false;e.target.value='';updateStatus();}};
 updateStatus();setInterval(updateStatus,10000);
 
-let micDirty=false;
+let micDirty=false,pendingVoiceFile=null;
 async function voiceStatus(){try{const v=await api('/api/voice');$('#voice-enabled').checked=v.enabled;
+pendingVoiceFile=v.pending_storage;$('#voice-file-request').hidden=!pendingVoiceFile;if(pendingVoiceFile)$('#voice-file-description').textContent='Move / rename: '+pendingVoiceFile.source+' → '+pendingVoiceFile.destination+' (expires after 2 minutes)';
 const selected=v.settings?.device||'';
+if(document.activeElement!==$('#mic-enhancement'))$('#mic-enhancement').value=v.settings?.enhancement||'balanced';
+const quality=v.audio_quality||{};$('#mic-quality').textContent='Speech level '+(quality.rms||0)+'% · gain '+(quality.gain||1)+'× · clipped '+(quality.clipped||0)+'% · dropped blocks '+(v.dropped_blocks||0)+(quality.clipped>1?' — reduce microphone input volume.':'');
 if(!micDirty&&document.activeElement!==$('#mic-device')){const devices=v.devices||[];$('#mic-device').innerHTML='<option value="">System default / voice.env</option>'+devices.map(d=>'<option value="'+escapeHTML(d.id)+'">'+escapeHTML(d.name)+' (input '+escapeHTML(d.id)+')</option>').join('');if(selected&&!devices.some(d=>d.id===selected)){$('#mic-device').insertAdjacentHTML('beforeend','<option value="'+escapeHTML(selected)+'">Saved input: '+escapeHTML(selected)+' (not currently listed)</option>');}$('#mic-device').value=selected;}
 const level=v.online&&v.enabled?Number(v.level||0):0;$('#mic-level').value=level;$('#mic-level-value').textContent=level+'%';$('#voice-status').textContent=v.error?v.error:!v.online?'Microphone service offline · Run the voice installer on your Pi':v.enabled?'Listening offline · '+v.device:'Microphone commands paused';$('#voice-message').textContent=v.message||'Speech stays on your Pi. Only explicit web-search queries are sent online.';$('#voice-results').innerHTML=(v.results||[]).map(r=>'<a href="'+escapeHTML(r.url)+'" target="_blank" rel="noopener noreferrer">'+escapeHTML(r.title)+'</a><p>'+escapeHTML(r.snippet)+'</p>').join('');}catch(e){$('#voice-status').textContent='Voice status unavailable';}}
 $('#voice-enabled').onchange=async e=>{try{await api('/api/voice/settings',{enabled:e.target.checked});await voiceStatus();}catch(err){toast(err.message);}};
@@ -89,3 +92,9 @@ navigate('Library');
 let githubRelease=null;
 $('#github-check').onclick=async()=>{const b=$('#github-check');b.disabled=true;$('#github-download').hidden=true;githubRelease=null;$('#github-status').textContent='Checking GitHub…';try{githubRelease=await api('/api/update/github/check',{});$('#github-status').textContent=githubRelease.available?'Version '+githubRelease.version+' is available from '+githubRelease.repository:'You are up to date.';$('#github-download').hidden=!githubRelease.available;}catch(e){$('#github-status').textContent=e.message;}finally{b.disabled=false;}};
 $('#github-download').onclick=async()=>{if(!githubRelease)return;const b=$('#github-download');b.disabled=true;$('#github-status').textContent='Downloading and verifying release…';try{await api('/api/update/github/download',{version:githubRelease.version,digest:githubRelease.digest});$('#github-status').textContent='Downloaded. Select Review update on TV to install.';b.hidden=true;await updateStatus();}catch(e){$('#github-status').textContent=e.message;}finally{b.disabled=false;}};
+
+$('#mic-enhancement').onchange=async e=>{try{await api('/api/voice/settings',{enhancement:e.target.value});toast('Microphone enhancement saved.');}catch(err){toast(err.message);}};
+
+for(const choice of ['confirm','cancel'])$('#voice-file-'+choice).onclick=async()=>{if(!pendingVoiceFile)return;const token=pendingVoiceFile.token;try{await api('/api/voice/storage/'+choice,{token});await voiceStatus();}catch(e){toast(e.message);}};
+
+if(location.hash==='#hey-hyper'){navigate('Manage');document.querySelector('.voice-panel').scrollIntoView();}

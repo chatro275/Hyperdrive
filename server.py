@@ -5,7 +5,7 @@ from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlsplit, parse_qs, quote
 from updater import Updater, MAX_ARCHIVE
-from voice import parse_command, search_web
+from voice import parse_command, search_web, normalize
 from storage import require_storage, file_path, directory_path
 
 ROOT = Path(__file__).resolve().parent
@@ -19,11 +19,12 @@ VIDEO_TYPES = {'.mp4', '.m4v', '.webm', '.mkv', '.mov', '.avi', '.ts'}
 UPDATER = Updater(ROOT, Path.home() / '.kodi/addons/script.frame')
 VOICE_LOCK = threading.Lock()
 VOICE = {'seen':0, 'device':'', 'error':'', 'last_command':'', 'message':'', 'results':[]}
+VOICE_PENDING = {}
 VOICE_SETTINGS = ROOT / 'voice-settings.json'
 AUDIO_VERIFICATION = {'heard':False, 'output':'', 'time':None}
 
 def voice_settings():
-    defaults={'enabled':True, 'device':'', 'revision':0}
+    defaults={'enabled':True, 'device':'', 'revision':0,'enhancement':'balanced'}
     try: defaults.update(json.loads(VOICE_SETTINGS.read_text()))
     except (OSError, ValueError, TypeError): pass
     return defaults
@@ -31,10 +32,87 @@ def voice_settings():
 def voice_enabled():
     return voice_settings()['enabled'] is True
 
+def voice_folder(name):
+    if not name:return directory_path(MEDIA,'')
+    current=MEDIA
+    for part in name.split('/'):
+        file_path(current,part)  # Reject traversal, control characters and symlinks.
+        matches=[p for p in current.iterdir() if p.is_dir() and not p.is_symlink() and normalize(p.name)==normalize(part)]
+        if len(matches)!=1:raise ValueError('Folder name must match exactly one folder')
+        current=directory_path(MEDIA,matches[0].relative_to(MEDIA).as_posix())
+    return current
+
 def voice_command(text):
     if not voice_enabled(): raise ValueError('Voice control is disabled')
     with connect() as c: movies = [dict(r) for r in c.execute('SELECT id,title,path,progress FROM movies')]
     command = parse_command(text, movies)
+    action=command['action']
+    def feedback(message):
+        with VOICE_LOCK:VOICE.update(last_command=text,message=message,results=[])
+        try:queue_command({'action':'voice_feedback','message':message[:200]})
+        except ValueError:pass
+        return {'ok':True,'message':message}
+    if action=='voice_help':
+        return feedback('Try: play a movie, pause, resume, skip forward thirty seconds, subtitles on, add a movie to watchlist, storage space, list files, list folders, find files called holiday, create folder called holidays, scan movies, open Hyperdrive.')
+    if action=='now_playing':
+        tv=tv_status();return feedback(('Playing: '+tv.get('title','')) if tv.get('playing') else 'Nothing is playing on the TV.')
+    if action in ('play_random','continue_movie'):
+        import random
+        candidates=movies if action=='play_random' else sorted([m for m in movies if 0<m['progress']<.97],key=lambda m:m['title'])
+        if not candidates:raise ValueError('No movies available for this request')
+        selected=random.choice(candidates) if action=='play_random' else candidates[0]
+        command={'action':'play','id':selected['id']}
+    if action=='watchlist':
+        with connect() as c:c.execute('UPDATE movies SET favorite=? WHERE id=?',(int(command['favorite']),command['id']))
+        return feedback('Watchlist updated.')
+    if action in ('move_file','rename_file'):
+        require_storage(MEDIA)
+        matches=[]
+        for index,path in enumerate(MEDIA.rglob('*')):
+            if index>=10000:break
+            if path.is_file() and not path.is_symlink() and normalize(path.name)==normalize(command['name']):matches.append(path)
+        if len(matches)!=1:raise ValueError('Say the exact filename including its extension. It must match one file only.')
+        source=matches[0]
+        # Validate every parent against symlinks and traversal.
+        source_parent=directory_path(MEDIA,source.parent.relative_to(MEDIA).as_posix() if source.parent!=MEDIA else '')
+        source=file_path(source_parent,source.name)
+        if action=='rename_file':
+            name=command['destination']
+            if not Path(name).suffix:name+=source.suffix
+            target=file_path(source_parent,name)
+        else:
+            folder=voice_folder(command['destination'])
+            target=file_path(folder,source.name)
+        if target.exists():raise ValueError('The destination already exists; no files were changed.')
+        stat=source.stat()
+        with VOICE_LOCK:
+            VOICE_PENDING.clear();VOICE_PENDING.update(token=uuid.uuid4().hex,source=source.relative_to(MEDIA).as_posix(),destination=target.relative_to(MEDIA).as_posix(),expires=time.time()+120,stamp=[stat.st_ino,stat.st_size,stat.st_mtime_ns])
+        return feedback('Review and confirm the file change in Hey Hyper microphone settings. No file has been changed yet.')
+    if action in ('storage_space','list_files','list_folders','find_files','create_folder','scan_movies'):
+        require_storage(MEDIA)
+        if action=='storage_space':
+            disk=shutil.disk_usage(MEDIA);return feedback('{:.1f} GB free of {:.1f} GB.'.format(disk.free/1024**3,disk.total/1024**3))
+        if action=='scan_movies':return feedback('Library scanned: '+str(scan())+' movie files.')
+        if action=='create_folder':
+            target=file_path(MEDIA,command['name'])
+            with LOCK:target.mkdir()
+            return feedback('Created folder: '+target.name)
+        folder=voice_folder(command.get('name','')) if action=='list_files' else MEDIA
+        if action=='find_files':
+            term=command['name'].casefold();found=[]
+            for index,path in enumerate(MEDIA.rglob('*')):
+                if index>=10000:break
+                if path.is_file() and not path.is_symlink() and term in path.name.casefold():
+                    found.append(path.relative_to(MEDIA).as_posix())
+                    if len(found)>=10:break
+            return feedback('Matching files (up to 10): '+', '.join(found) if found else 'No matching files found in the first 10,000 entries.')
+        names=[]
+        for path in folder.iterdir():
+            if path.is_symlink() or path.name.startswith(('.upload-','.migration-')):continue
+            if action=='list_folders' and not path.is_dir():continue
+            names.append(path.name+('/' if path.is_dir() else ''))
+            if len(names)>=10:break
+        return feedback('Entries (up to 10): '+', '.join(names) if names else 'This folder is empty.')
     if command['action'] == 'web_search':
         results = search_web(command['query'])
         with VOICE_LOCK: VOICE.update(results=results, message='Search results for ' + command['query'], last_command=text)
@@ -51,6 +129,37 @@ def voice_command(text):
     message='Playing ' + command['title'] if command['action']=='play' else 'Sent to TV: ' + command['action'].replace('_',' ')
     with VOICE_LOCK: VOICE.update(last_command=text, message=message, results=[])
     return {'ok':True, 'message':message}
+
+def voice_pending():
+    with VOICE_LOCK:
+        if VOICE_PENDING.get('expires',0)<time.time():return None
+        return {k:v for k,v in VOICE_PENDING.items() if k!='stamp'}
+
+def confirm_voice_storage(token):
+    require_storage(MEDIA)
+    with LOCK,VOICE_LOCK:
+        pending=dict(VOICE_PENDING)
+        if not token or token!=pending.get('token') or pending.get('expires',0)<time.time():raise ValueError('File request expired. Ask again.')
+        if tv_status().get('playing'):raise ValueError('Stop playback before changing file locations.')
+        def checked(relative):
+            p=Path(relative);parent='' if str(p.parent)=='.' else p.parent.as_posix()
+            return file_path(directory_path(MEDIA,parent),p.name)
+        source=checked(pending['source']);target=checked(pending['destination']);stat=source.stat()
+        if [stat.st_ino,stat.st_size,stat.st_mtime_ns]!=pending['stamp']:raise ValueError('The source file changed. Ask again.')
+        if target.exists():raise ValueError('The destination already exists.')
+        moved=False
+        try:
+            with connect() as c:
+                c.execute('UPDATE movies SET path=? WHERE path=?',(str(target),str(source)))
+                c.execute('DELETE FROM frame_visibility WHERE path=?',(pending['destination'],))
+                c.execute('UPDATE frame_visibility SET path=? WHERE path=?',(pending['destination'],pending['source']))
+                source.rename(target);moved=True
+        except Exception:
+            if moved:target.rename(source)
+            raise
+        VOICE_PENDING.clear()
+        VOICE.update(message='File moved to '+pending['destination'])
+        return {'ok':True}
 
 def tv_status():
     with TV_LOCK:
@@ -239,7 +348,7 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, OSError) as e: return self.json({'error':str(e)}, 400)
         if route == '/api/voice':
             with VOICE_LOCK: state = dict(VOICE)
-            return self.json({**state, 'settings':voice_settings(), 'enabled':voice_enabled(), 'online':time.monotonic()-state['seen']<10})
+            return self.json({**state, 'pending_storage':voice_pending(), 'settings':voice_settings(), 'enabled':voice_enabled(), 'online':time.monotonic()-state['seen']<10})
         if route.startswith('/media/'):
             try:require_storage(MEDIA)
             except (ValueError,OSError) as exc:return self.json({'error':str(exc)},503)
@@ -294,13 +403,20 @@ class Handler(BaseHTTPRequestHandler):
                 if type(data.get('heard')) is not bool:raise ValueError('Expected test result')
                 AUDIO_VERIFICATION.update(heard=data['heard'],output=str(data.get('output',''))[:300],time=time.time())
                 return self.json({'ok':True})
+            if route == '/api/voice/storage/confirm':return self.json(confirm_voice_storage(data.get('token')))
+            if route == '/api/voice/storage/cancel':
+                with VOICE_LOCK:
+                    if data.get('token')!=VOICE_PENDING.get('token'):raise ValueError('File request changed')
+                    VOICE_PENDING.clear()
+                return self.json({'ok':True})
             if route == '/api/voice/settings':
+                if 'enhancement' in data and data['enhancement'] not in ('off','balanced','strong'):raise ValueError('Invalid enhancement mode')
                 if 'enabled' in data and type(data['enabled']) is not bool: raise ValueError('Expected enabled true or false')
                 if 'device' in data and (not isinstance(data['device'],str) or len(data['device'])>200):raise ValueError('Invalid microphone selection')
                 if 'refresh' in data and type(data['refresh']) is not bool:raise ValueError('Expected refresh true or false')
                 with VOICE_LOCK:
                     settings=voice_settings()
-                    settings.update({k:data[k] for k in ('enabled','device') if k in data})
+                    settings.update({k:data[k] for k in ('enabled','device','enhancement') if k in data})
                     if data.get('refresh'):settings['revision']+=1
                     temp=VOICE_SETTINGS.with_suffix('.tmp')
                     temp.write_text(json.dumps(settings));temp.replace(VOICE_SETTINGS)
@@ -313,8 +429,11 @@ class Handler(BaseHTTPRequestHandler):
                     devices=[{'id':str(d['id'])[:20],'name':str(d['name'])[:200]} for d in devices[:64] if isinstance(d,dict) and 'id' in d and 'name' in d]
                     with VOICE_LOCK: VOICE.update(seen=time.monotonic(), device=str(data.get('device',''))[:200], error=str(data.get('error',''))[:200], devices=devices, level=max(0,min(100,int(data.get('level',0)))))
                     with VOICE_LOCK:
-                        for key in ('utterances','wakes','commands'):
+                        for key in ('utterances','wakes','commands','dropped_blocks'):
                             VOICE[key]=max(0,min(100000000,int(data.get(key,0))))
+                    quality=data.get('audio_quality',{})
+                    if isinstance(quality,dict):
+                        with VOICE_LOCK:VOICE['audio_quality']={k:max(0,min(100,float(quality.get(k,0)))) for k in ('rms','clipped','gain')}
                     if data.get('error'):HEALTH.event('Microphone',str(data['error']))
                     return self.json(voice_settings())
                 if route.endswith('/listening'):

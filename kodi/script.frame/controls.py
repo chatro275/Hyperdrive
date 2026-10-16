@@ -186,7 +186,7 @@ def test_sound():
 
 def voice_results():
     state=api('/api/voice');results=state.get('results',[])
-    if not results:return xbmcgui.Dialog().ok('Hey Frame',state.get('message') or 'No search results yet.')
+    if not results:return xbmcgui.Dialog().ok('Hey Hyper',state.get('message') or 'No search results yet.')
     choice=xbmcgui.Dialog().select('Web search results', [r['title'] for r in results])
     if choice>=0:
         result=results[choice]
