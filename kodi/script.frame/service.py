@@ -1,7 +1,7 @@
 import json, time
 import xbmc, xbmcgui
 from common import api
-from controls import rpc, audio_status, power_status, set_track, execute_power
+from controls import rpc, audio_status, power_status, set_track, execute_power, restore_movie_route, diagnose_movie_audio
 
 class Playback(xbmc.Player):
     movie = None
@@ -16,6 +16,8 @@ class Playback(xbmc.Player):
             except Exception as exc: xbmc.log('Frame progress save: ' + str(exc), xbmc.LOGWARNING)
 
     def onAVStarted(self):
+        try:restore_movie_route()
+        except Exception as exc:self.error=str(exc)
         self.tracking = bool(self.movie and self.getPlayingFile() == self.movie['path'])
         if self.pending_resume and self.tracking:
             try: self.seekTime(self.getTotalTime() * self.pending_resume)
@@ -65,6 +67,9 @@ class Playback(xbmc.Player):
             video=next((p for p in rpc('Player.GetActivePlayers') if p['type']=='video'),None)
             if not video:raise ValueError('Start a movie first')
             rpc('Player.SetSubtitle',playerid=video['playerid'],subtitle='on' if action=='subtitles_on' else 'off')
+        elif action == 'audio_diagnose':diagnose_movie_audio()
+        elif action == 'end_movie':
+            self.save();self.stop();xbmc.executebuiltin('RunScript(script.hyperdrive)')
         elif action == 'stop': self.stop()
         elif action == 'volume':
             if audio_status().get('passthrough'):raise ValueError('Use TV or receiver volume while passthrough is enabled')

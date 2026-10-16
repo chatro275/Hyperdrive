@@ -28,6 +28,8 @@ class WakeGate:
         return None
 
 def parse_command(text, movies):
+    text=re.sub(r'^(?:(?:can|could|would) you |please |i (?:want|would like) to )+', '', text.strip(), flags=re.I)
+    text=re.sub(r' please$', '', text, flags=re.I)
     text_original=text
     text = ' '.join(normalize(text).split())
     actions = {'pause':'pause_only', 'pause movie':'pause_only', 'resume':'resume', 'resume movie':'resume',
@@ -45,6 +47,17 @@ def parse_command(text, movies):
         'how much space is left':'storage_space','storage space':'storage_space',
         'list files':'list_files','show files':'list_files','list folders':'list_folders',
         'help':'voice_help','what can you do':'voice_help'})
+    actions.update({'go home':'hyperdrive','home':'hyperdrive','home page':'hyperdrive',
+        'go to the home page':'hyperdrive','take me home':'hyperdrive','back to home':'hyperdrive',
+        'end movie':'end_movie','end the movie':'end_movie','stop the movie':'end_movie',
+        'close movie':'end_movie','finish watching':'end_movie',
+        'check for updates':'check_updates','check for software updates':'check_updates',
+        'update software':'updates','update hyperdrive':'updates','software update':'updates',
+        'install update':'updates','fix sound':'audio_setup','fix movie audio':'audio_setup',
+        'test movie audio':'audio_diagnose','check movie audio':'audio_diagnose',
+        'pause the movie':'pause_only','resume the movie':'resume','keep playing':'resume',
+        'turn subtitles on':'subtitles_on','turn subtitles off':'subtitles_off'})
+    text=re.sub(r'^(?:put on|start playing|i want to watch) ', 'play ', text)
     if text in actions: return {'action':actions[text]}
     # Folder/file names retain punctuation; names are validated again at the storage boundary.
     raw=text_original.strip()

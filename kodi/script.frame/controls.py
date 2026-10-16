@@ -67,7 +67,13 @@ def track_label(track):
 def update_menu():
     state = api('/api/update')
     if not state['staged']:
-        return xbmcgui.Dialog().ok('Frame ' + state['installed'], 'No update is staged. Upload a Frame update ZIP in the local portal under Manage library → Software updates.')
+        release=api('/api/update/github/check',{},timeout=45)
+        if not release['available']:return xbmcgui.Dialog().ok('Hyperdrive updates','You are up to date.')
+        if not xbmcgui.Dialog().yesno('Download '+release['version']+'?', 'Download and verify the GitHub release? Installation requires a separate confirmation.'):return
+        api('/api/update/github/download',{'version':release['version'],'digest':release['digest']},timeout=120)
+        state=api('/api/update')
+    if not state['staged']:
+        return xbmcgui.Dialog().ok('Frame ' + state['installed'], 'No update is staged. Use Software updates in the dashboard.')
     if xbmc.Player().isPlaying():
         return xbmcgui.Dialog().ok('Finish playback first', 'Stop playback before installing a Frame update.')
     if not xbmcgui.Dialog().yesno('Install Frame ' + state['staged'] + '?',
@@ -146,6 +152,7 @@ def hdmi_setup():
     except Exception:
         for key in reversed(changed):set_setting(key,old[key])
         raise
+    audio_profile().write_text(json.dumps({'sink':devices[choice].get('sink',{}).get('name','')}))
     if xbmcgui.Dialog().yesno('HDMI configured', 'Run the left and right sound test now? Stop any current movie first. If sound is still missing, check the TV mute/volume and selected HDMI port.'):
         test_sound()
 
@@ -191,3 +198,36 @@ def voice_results():
     if choice>=0:
         result=results[choice]
         xbmcgui.Dialog().textviewer(result['title'],result['snippet']+'\n\n'+result['url']+'\n\nOpen the link in the Frame portal on your phone or computer.')
+
+
+def audio_profile():
+    from pathlib import Path
+    import xbmcaddon, xbmcvfs
+    folder=Path(xbmcvfs.translatePath(xbmcaddon.Addon('script.frame').getAddonInfo('profile')))
+    folder.mkdir(parents=True,exist_ok=True)
+    return folder/'audio-route.json'
+
+def restore_movie_route():
+    # Desktop streams are recreated for each movie; keep the explicitly chosen sink.
+    try: saved=json.loads(audio_profile().read_text())
+    except (OSError,ValueError):return
+    name=saved.get('sink')
+    if not name:return
+    sinks=desktop_sinks()
+    if not any(s.get('name')==name for s in sinks):raise ValueError('Saved HDMI output is missing. Run Fix HDMI sound again.')
+    for stream in json.loads(pactl('--format=json','list','sink-inputs')):
+        props=stream.get('properties',{})
+        if 'kodi' in (props.get('application.name','')+' '+props.get('application.process.binary','')).lower():
+            pactl('move-sink-input',str(stream['index']),name)
+
+def diagnose_movie_audio():
+    state=audio_status();issues=[]
+    if state.get('muted'):issues.append('Kodi is muted.')
+    if state.get('volume')==0:issues.append('Kodi volume is zero.')
+    if not state.get('tracks'):issues.append('No movie audio tracks detected. Start a movie; the file may have no audio.')
+    elif state.get('track',-1)<0:issues.append('No active audio track. Select a track in Sound settings.')
+    if state.get('passthrough'):issues.append('Passthrough is enabled. TV speakers may need stereo PCM; use Fix HDMI sound.')
+    if not state.get('output'):issues.append('No Kodi output device is selected.')
+    message='Output: '+str(state.get('output','unknown'))+'\n'+'\n'.join(issues or ['Kodi reports an active audio track and nonzero, unmuted volume. This does not prove sound reaches the TV.'])
+    xbmcgui.Dialog().textviewer('Movie audio diagnosis',message)
+    return issues

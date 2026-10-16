@@ -23,7 +23,8 @@ class VoiceTests(unittest.TestCase):
         self.assertEqual(parse_command('mute',[])['action'],'mute_on')
         self.assertEqual(parse_command('volume 999',[])['value'],100)
         self.assertEqual(parse_command('set volume to fifty percent',[])['value'],50)
-        for phrase in ('reboot','shutdown','install update','run shell command'):
+        self.assertEqual(parse_command('install update',[])['action'],'updates')
+        for phrase in ('reboot','shutdown','run shell command'):
             with self.assertRaises(ValueError):parse_command(phrase,[])
     def test_search_only_explicit_query(self):
         self.assertEqual(parse_command('search the web for raspberry pi',[]),{'action':'web_search','query':'raspberry pi'})
@@ -70,3 +71,26 @@ class VoiceTests(unittest.TestCase):
         loud=array('h',[32767]*4000).tobytes();processed=array('h',enhancer.process(loud))
         self.assertEqual(enhancer.metrics['clipped'],100)
         self.assertTrue(all(-32768<=x<=32767 for x in processed))
+
+class Hyper28Tests(unittest.TestCase):
+    def test_natural_commands(self):
+        for text,action in [('could you take me home please','hyperdrive'),('please end the movie','end_movie'),('check for software updates','check_updates'),('update hyperdrive','updates'),('can you pause the movie','pause_only'),('fix movie audio','audio_setup')]:
+            self.assertEqual(parse_command(text,[])['action'],action)
+    def test_dual_mic_arbitration(self):
+        from voice_worker import MicArbiter
+        gate=MicArbiter()
+        self.assertTrue(gate.claim(0,0));self.assertFalse(gate.claim(1,1))
+        gate.finished(2)
+        self.assertFalse(gate.claim(1,4));self.assertTrue(gate.claim(1,6))
+    def test_microphones_have_separate_capture_and_close_on_start_error(self):
+        from voice_worker import Microphone
+        from unittest.mock import Mock
+        sd=Mock();sd.query_devices.return_value={'default_samplerate':16000,'name':'USB mic'}
+        first=Mock();second=Mock();sd.RawInputStream.side_effect=[first,second]
+        factory=Mock()
+        a=Microphone(sd,factory,None,1,'balanced');b=Microphone(sd,factory,None,2,'balanced')
+        self.assertIsNot(a.queue,b.queue);self.assertIsNot(a.gate,b.gate)
+        a.close();b.close();first.close.assert_called_once();second.close.assert_called_once()
+        bad=Mock();bad.start.side_effect=RuntimeError('disconnected');sd.RawInputStream.side_effect=None;sd.RawInputStream.return_value=bad
+        with self.assertRaises(RuntimeError):Microphone(sd,factory,None,3,'balanced')
+        bad.close.assert_called_once()

@@ -64,12 +64,13 @@ const selected=v.settings?.device||'';
 if(document.activeElement!==$('#mic-enhancement'))$('#mic-enhancement').value=v.settings?.enhancement||'balanced';
 const quality=v.audio_quality||{};$('#mic-quality').textContent='Speech level '+(quality.rms||0)+'% · gain '+(quality.gain||1)+'× · clipped '+(quality.clipped||0)+'% · dropped blocks '+(v.dropped_blocks||0)+(quality.clipped>1?' — reduce microphone input volume.':'');
 if(!micDirty&&document.activeElement!==$('#mic-device')){const devices=v.devices||[];$('#mic-device').innerHTML='<option value="">System default / voice.env</option>'+devices.map(d=>'<option value="'+escapeHTML(d.id)+'">'+escapeHTML(d.name)+' (input '+escapeHTML(d.id)+')</option>').join('');if(selected&&!devices.some(d=>d.id===selected)){$('#mic-device').insertAdjacentHTML('beforeend','<option value="'+escapeHTML(selected)+'">Saved input: '+escapeHTML(selected)+' (not currently listed)</option>');}$('#mic-device').value=selected;}
+if(!micDirty&&document.activeElement!==$('#mic-secondary')){const select=$('#mic-secondary');select.innerHTML='<option value="">Disabled</option>'+(v.devices||[]).map(d=>'<option value="'+escapeHTML(d.id)+'">'+escapeHTML(d.name)+'</option>').join('');const saved=v.settings?.secondary_device||'';if(saved&&!Array.from(select.options).some(o=>o.value===saved))select.add(new Option('Saved input '+saved+' (unavailable)',saved));select.value=saved;}
 const level=v.online&&v.enabled?Number(v.level||0):0;$('#mic-level').value=level;$('#mic-level-value').textContent=level+'%';$('#voice-status').textContent=v.error?v.error:!v.online?'Microphone service offline · Run the voice installer on your Pi':v.enabled?'Listening offline · '+v.device:'Microphone commands paused';$('#voice-message').textContent=v.message||'Speech stays on your Pi. Only explicit web-search queries are sent online.';$('#voice-results').innerHTML=(v.results||[]).map(r=>'<a href="'+escapeHTML(r.url)+'" target="_blank" rel="noopener noreferrer">'+escapeHTML(r.title)+'</a><p>'+escapeHTML(r.snippet)+'</p>').join('');}catch(e){$('#voice-status').textContent='Voice status unavailable';}}
 $('#voice-enabled').onchange=async e=>{try{await api('/api/voice/settings',{enabled:e.target.checked});await voiceStatus();}catch(err){toast(err.message);}};
 voiceStatus();setInterval(voiceStatus,3000);
 
 $('#mic-device').onchange=()=>{micDirty=true;$('#mic-save-status').textContent='Unsaved microphone selection';};
-$('#mic-save').onclick=async()=>{const b=$('#mic-save');b.disabled=true;try{await api('/api/voice/settings',{device:$('#mic-device').value});micDirty=false;$('#mic-save-status').textContent='Saved. The voice service will switch inputs within a few seconds.';await voiceStatus();}catch(e){$('#mic-save-status').textContent=e.message;}finally{b.disabled=false;}};
+$('#mic-save').onclick=async()=>{const b=$('#mic-save');b.disabled=true;try{await api('/api/voice/settings',{device:$('#mic-device').value,secondary_device:$('#mic-secondary').value});micDirty=false;$('#mic-save-status').textContent='Saved. The voice service will switch inputs within a few seconds.';await voiceStatus();}catch(e){$('#mic-save-status').textContent=e.message;}finally{b.disabled=false;}};
 $('#mic-refresh').onclick=async()=>{try{await api('/api/voice/settings',{refresh:true});micDirty=false;$('#mic-save-status').textContent='Refresh requested. Allow the voice service time to restart and reload its model.';}catch(e){$('#mic-save-status').textContent=e.message;}};
 
 async function healthStatus(run=false){
@@ -97,4 +98,14 @@ $('#mic-enhancement').onchange=async e=>{try{await api('/api/voice/settings',{en
 
 for(const choice of ['confirm','cancel'])$('#voice-file-'+choice).onclick=async()=>{if(!pendingVoiceFile)return;const token=pendingVoiceFile.token;try{await api('/api/voice/storage/'+choice,{token});await voiceStatus();}catch(e){toast(e.message);}};
 
-if(location.hash==='#hey-hyper'){navigate('Manage');document.querySelector('.voice-panel').scrollIntoView();}
+
+
+$('#mic-secondary').onchange=()=>{micDirty=true;$('#mic-save-status').textContent='Unsaved microphone selection';};
+const settingsNav=document.createElement('nav');settingsNav.className='settings-nav';settingsNav.setAttribute('aria-label','Settings sections');
+const settingsGroups=['Library','Sound & power','Hey Hyper','Updates','System'];
+document.querySelector('.voice-panel').dataset.settings='Hey Hyper';document.querySelector('.device-settings').dataset.settings='Sound & power';
+$('#management').insertBefore(settingsNav,$('#management').children[1]);
+function settingsSection(name){document.querySelectorAll('[data-settings]').forEach(el=>{el.hidden=el.dataset.settings!==name;});settingsNav.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b.textContent===name)));if(name==='Sound & power')document.querySelector('.device-settings').open=true;}
+for(const name of settingsGroups){const button=document.createElement('button');button.textContent=name;button.onclick=()=>settingsSection(name);settingsNav.append(button);}
+settingsSection('Library');
+if(location.hash==='#hey-hyper'){navigate('Manage');settingsSection('Hey Hyper');document.querySelector('.mic-config').open=true;}

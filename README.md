@@ -260,3 +260,11 @@ Supported examples:
 - “Help”, “search the web for a topic”.
 
 The software does not guarantee recognition with every microphone. Automated checks exercise synthetic audio, command parsing and storage confirmation; speech accuracy and CEC/audio still require Pi hardware testing. No new speech dependencies are needed. Install the GitHub update and restart the Pi to load the new worker and Kodi code.
+
+## Audio, dual microphones and commands (2.8)
+
+Settings now groups Library, Sound & power, Hey Hyper, Updates and System. While a movie plays, use Diagnose current movie audio to inspect Kodi mute, zero volume, audio tracks and passthrough. Fix HDMI sound selects stereo PCM and saves the desktop HDMI sink; new movie streams are routed back to that sink without overriding subsequent user mute or volume changes. Run the audible tone test too. Diagnostics cannot prove that the TV speakers produce sound.
+
+Hey Hyper accepts polite phrases such as “could you pause the movie please”, “take me home”, “end the movie”, “check for software updates”, “update Hyperdrive” and “fix movie audio”. Home opens Hyperdrive; end movie stops playback, preserves resume progress and returns home. Updating checks GitHub on TV, asks before downloading and separately before installation; it never silently installs or restarts. This is expanded offline phrase matching, not unrestricted conversational AI.
+
+In Hey Hyper settings select a primary and optional second microphone, then Save microphone. Separate streams and recognizers share the offline model. The first microphone detecting a wake owns that turn; a brief cooldown suppresses the other mic's duplicate command. A failed input is retried while the working input continues. This is independent listening, not beamforming or echo cancellation; it may increase CPU use and needs testing on your Pi with both devices.

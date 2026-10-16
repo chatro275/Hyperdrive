@@ -24,6 +24,7 @@ class AudioControlsTests(unittest.TestCase):
         self.module=importlib.util.module_from_spec(spec)
         with patch.dict(sys.modules,{'xbmc':kodi,'xbmcgui':gui,'common':types.SimpleNamespace(api=Mock())}):spec.loader.exec_module(self.module)
         self.module.test_sound=Mock()
+        self.module.audio_profile=Mock(return_value=Mock())
     def test_hdmi_pcm_stereo_and_unmute(self):
         self.module.hdmi_setup()
         self.assertEqual(self.values,{'audiooutput.audiodevice':'ALSA:hdmi','audiooutput.passthrough':False,'audiooutput.channels':1})
@@ -73,3 +74,31 @@ class AudioControlsTests(unittest.TestCase):
             self.assertEqual(self.module.desktop_sinks(),[])
             self.module.hdmi_setup()
         self.assertEqual(self.values['audiooutput.audiodevice'],'ALSA:hdmi')
+
+    def test_movie_route_restored_without_changing_mute_or_volume(self):
+        self.module.audio_profile.return_value.read_text.return_value='{"sink":"hdmi-tv"}'
+        streams=[{'index':7,'properties':{'application.name':'Kodi'}},{'index':8,'properties':{'application.name':'Browser'}}]
+        with patch.object(self.module,'desktop_sinks',return_value=[{'name':'hdmi-tv'}]), patch.object(self.module,'pactl',return_value=json.dumps(streams)) as command:
+            self.module.restore_movie_route()
+        self.assertEqual(command.call_args_list[-1].args,('move-sink-input','7','hdmi-tv'))
+        self.assertEqual(command.call_count,2)
+
+    def test_movie_diagnosis_reports_silent_states(self):
+        with patch.object(self.module,'audio_status',return_value={'muted':True,'volume':0,'tracks':[],'passthrough':True,'output':'HDMI'}):
+            issues=self.module.diagnose_movie_audio()
+        self.assertEqual(len(issues),4)
+        self.dialog.textviewer.assert_called_once()
+
+    def test_update_download_requires_confirmation(self):
+        self.module.api=Mock(side_effect=[{'staged':None},{'available':True,'version':'9.0.0'}])
+        self.dialog.yesno.return_value=False
+        self.module.update_menu()
+        self.assertEqual(self.module.api.call_count,2)
+
+    def test_update_requires_separate_install_confirmation(self):
+        self.module.api=Mock(side_effect=[{'staged':None},{'available':True,'version':'9.0.0','digest':'abc'},{},{'staged':'9.0.0','digest':'abc'}])
+        self.module.xbmc.Player=lambda:types.SimpleNamespace(isPlaying=lambda:False)
+        self.dialog.yesno.side_effect=[True,False]
+        self.module.update_menu()
+        self.assertEqual(self.module.api.call_count,4)
+        self.assertEqual(self.dialog.yesno.call_count,2)

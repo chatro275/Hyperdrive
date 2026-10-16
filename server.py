@@ -24,7 +24,7 @@ VOICE_SETTINGS = ROOT / 'voice-settings.json'
 AUDIO_VERIFICATION = {'heard':False, 'output':'', 'time':None}
 
 def voice_settings():
-    defaults={'enabled':True, 'device':'', 'revision':0,'enhancement':'balanced'}
+    defaults={'enabled':True, 'device':'', 'secondary_device':'', 'revision':0,'enhancement':'balanced'}
     try: defaults.update(json.loads(VOICE_SETTINGS.read_text()))
     except (OSError, ValueError, TypeError): pass
     return defaults
@@ -52,6 +52,9 @@ def voice_command(text):
         try:queue_command({'action':'voice_feedback','message':message[:200]})
         except ValueError:pass
         return {'ok':True,'message':message}
+    if action=='check_updates':
+        release=UPDATER.github_release()
+        return feedback(('Update '+release['version']+' is available. Say update Hyperdrive to review it on TV.') if release['available'] else 'Hyperdrive is up to date.')
     if action=='voice_help':
         return feedback('Try: play a movie, pause, resume, skip forward thirty seconds, subtitles on, add a movie to watchlist, storage space, list files, list folders, find files called holiday, create folder called holidays, scan movies, open Hyperdrive.')
     if action=='now_playing':
@@ -413,10 +416,11 @@ class Handler(BaseHTTPRequestHandler):
                 if 'enhancement' in data and data['enhancement'] not in ('off','balanced','strong'):raise ValueError('Invalid enhancement mode')
                 if 'enabled' in data and type(data['enabled']) is not bool: raise ValueError('Expected enabled true or false')
                 if 'device' in data and (not isinstance(data['device'],str) or len(data['device'])>200):raise ValueError('Invalid microphone selection')
+                if 'secondary_device' in data and (not isinstance(data['secondary_device'],str) or len(data['secondary_device'])>200):raise ValueError('Invalid second microphone')
                 if 'refresh' in data and type(data['refresh']) is not bool:raise ValueError('Expected refresh true or false')
                 with VOICE_LOCK:
                     settings=voice_settings()
-                    settings.update({k:data[k] for k in ('enabled','device','enhancement') if k in data})
+                    settings.update({k:data[k] for k in ('enabled','device','secondary_device','enhancement') if k in data})
                     if data.get('refresh'):settings['revision']+=1
                     temp=VOICE_SETTINGS.with_suffix('.tmp')
                     temp.write_text(json.dumps(settings));temp.replace(VOICE_SETTINGS)
@@ -479,7 +483,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json({'ok': True})
             if route == '/api/tv/control':
                 action = data.get('action')
-                if action not in {'hyperdrive', 'pause', 'stop', 'left', 'right', 'up', 'down', 'select', 'back', 'home', 'volume', 'mute', 'audio_track', 'audio_settings', 'audio_setup', 'audio_test', 'airplay_settings', 'updates', 'power_menu', 'reboot', 'shutdown'}:
+                if action not in {'hyperdrive', 'pause', 'stop', 'left', 'right', 'up', 'down', 'select', 'back', 'home', 'volume', 'mute', 'audio_track', 'audio_diagnose','end_movie','audio_settings', 'audio_setup', 'audio_test', 'airplay_settings', 'updates', 'power_menu', 'reboot', 'shutdown'}:
                     raise ValueError('Unknown TV action')
                 command = {'action':action}
                 if action in {'volume', 'audio_track'}:
