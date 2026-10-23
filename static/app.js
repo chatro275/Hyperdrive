@@ -4,7 +4,7 @@ function escapeHTML(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':
 function toast(text){$('#toast').textContent=text;$('#toast').classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.remove('show'),4500);}
 async function api(path,body){const r=await fetch(path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw Error(data.error||'Request failed');return data;}
 async function load(){movies=await api('/api/movies');$('#total').textContent=movies.length;render();}
-function navigate(name){page=name;genre='All movies';$('.search input').value='';query='';document.querySelectorAll('.nav').forEach(b=>b.classList.toggle('active',b.dataset.page===page));$('#page-name').textContent=page;$('#discover').hidden=page!=='Discover';$('#management').hidden=page!=='Manage';render();}
+function navigate(name){page=name;genre='All movies';$('.search input').value='';query='';document.querySelectorAll('.nav').forEach(b=>b.classList.toggle('active',b.dataset.page===page));$('#page-name').textContent=page==='Manage'?'Settings':page==='Library'?'Movies':page;document.querySelector('main>header').hidden=page==='Manage';document.querySelector('.tv-panel').hidden=page==='Manage';document.querySelector('.search').hidden=page==='Manage';document.querySelector('.movie-nav').hidden=page==='Manage';$('#discover').hidden=page!=='Discover';$('#management').hidden=page!=='Manage';render();if(page==='Manage')settingsSection(activeSettings);else document.querySelector('.collection').hidden=false;}
 function render(){let items=movies;if(page==='Watchlist')items=items.filter(m=>m.favorite);if(page==='Continue watching')items=items.filter(m=>m.progress>0&&m.progress<.97);items=items.filter(m=>(genre==='All movies'||m.genre===genre)&&m.title.toLowerCase().includes(query.toLowerCase()));$('#collection-title').textContent=page==='Discover'?'Something for every mood.':page==='Manage'?'Your collection':page==='Library'?'The movie library.':page+'.';$('#collection-subtitle').textContent=page==='Manage'?'Select a film to edit its title, year or genre.':'Your couch. Your collection. Your call.';$('#view-all').hidden=page!=='Discover';$('#movie-count').textContent=items.length+' films';$('#empty').hidden=!!items.length;$('#empty h3').textContent=query||genre!=='All movies'?'No films found.':page==='Watchlist'?'Save something for movie night.':page==='Continue watching'?'A fresh start for your next film.':'Your next movie night starts here.';$('#empty p').textContent=query?'Try another title or genre.':page==='Watchlist'?'Tap the heart on a movie to keep it here.':'Upload films from Manage library. They will appear on your TV.';document.querySelectorAll('.chip').forEach(b=>b.classList.toggle('selected',b.dataset.genre===genre));$('#movies').innerHTML=items.map((m,i)=>`<article class="movie"><button class="poster" data-open="${m.id}" aria-label="${page==='Manage'?'Edit':'Open'} ${escapeHTML(m.title)}" style="background:linear-gradient(145deg,hsl(${85+i*31} 20% 29%),#11180f)">${m.image?`<img src="https://images.unsplash.com/${m.image}?auto=format&fit=crop&w=500&q=80" alt="" loading="lazy">`:''}<span class="poster-tag">ON YOUR PI</span><span class="poster-title">${m.caption?`<small>${escapeHTML(m.caption)}</small>`:''}${escapeHTML(m.title)}</span>${m.progress?`<span class="progress" style="width:${m.progress*100}%"></span>`:''}</button><div class="movie-info"><h3>${escapeHTML(m.title)}</h3>${`<button class="favorite ${m.favorite?'saved':''}" data-favorite="${m.id}" aria-label="${m.favorite?'Remove from':'Add to'} watchlist" aria-pressed="${!!m.favorite}">${m.favorite?'♥':'♡'}</button>`}</div><p>${escapeHTML(m.year||'Local movie')}<span>·</span>${escapeHTML(m.genre)}</p></article>`).join('');}
 function openMovie(id){
  const m=movies.find(m=>String(m.id)===id);if(!m)return;current=m;
@@ -88,7 +88,6 @@ healthStatus();setInterval(healthStatus,15000);
 
 // Keep configuration in Settings so the library stays focused on movies.
 $('#management').append(document.querySelector('.voice-panel'),document.querySelector('.device-settings'));
-navigate('Library');
 
 let githubRelease=null;
 $('#github-check').onclick=async()=>{const b=$('#github-check');b.disabled=true;$('#github-download').hidden=true;githubRelease=null;$('#github-status').textContent='Checking GitHub…';try{githubRelease=await api('/api/update/github/check',{});$('#github-status').textContent=githubRelease.available?'Version '+githubRelease.version+' is available from '+githubRelease.repository:'You are up to date.';$('#github-download').hidden=!githubRelease.available;}catch(e){$('#github-status').textContent=e.message;}finally{b.disabled=false;}};
@@ -102,10 +101,18 @@ for(const choice of ['confirm','cancel'])$('#voice-file-'+choice).onclick=async(
 
 $('#mic-secondary').onchange=()=>{micDirty=true;$('#mic-save-status').textContent='Unsaved microphone selection';};
 const settingsNav=document.createElement('nav');settingsNav.className='settings-nav';settingsNav.setAttribute('aria-label','Settings sections');
-const settingsGroups=['Library','Sound & power','Hey Hyper','Updates','System'];
+const settingsGroups=['Library','Sound & power','Hey Hyper','Updates','Remote access','System'];
 document.querySelector('.voice-panel').dataset.settings='Hey Hyper';document.querySelector('.device-settings').dataset.settings='Sound & power';
 $('#management').insertBefore(settingsNav,$('#management').children[1]);
-function settingsSection(name){document.querySelectorAll('[data-settings]').forEach(el=>{el.hidden=el.dataset.settings!==name;});settingsNav.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b.textContent===name)));if(name==='Sound & power')document.querySelector('.device-settings').open=true;}
+let activeSettings='Library';
+function settingsSection(name){activeSettings=name;document.querySelector('.collection').hidden=page==='Manage'&&name!=='Library';$('#scan').hidden=name!=='Library';document.querySelectorAll('[data-settings]').forEach(el=>{el.hidden=el.dataset.settings!==name;});settingsNav.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b.textContent===name)));if(name==='Sound & power')document.querySelector('.device-settings').open=true;}
 for(const name of settingsGroups){const button=document.createElement('button');button.textContent=name;button.onclick=()=>settingsSection(name);settingsNav.append(button);}
-settingsSection('Library');
+navigate('Library');settingsSection('Library');
 if(location.hash==='#hey-hyper'){navigate('Manage');settingsSection('Hey Hyper');document.querySelector('.mic-config').open=true;}
+
+function openSettingsHash(){if(location.hash==='#settings'){navigate('Manage');settingsSection('Library');}if(location.hash==='#remote'){navigate('Manage');settingsSection('Remote access');}}
+window.addEventListener('hashchange',openSettingsHash);openSettingsHash();
+
+let remoteAddress='';
+$('#remote-check').onclick=async()=>{const button=$('#remote-check');button.disabled=true;$('#remote-status').textContent='Checking…';$('#remote-url').hidden=true;$('#remote-copy').hidden=true;try{const state=await api('/api/remote');$('#remote-status').textContent=state.message;if(state.ready){remoteAddress=state.url;$('#remote-url').href=state.url;$('#remote-url').textContent=state.url;$('#remote-url').hidden=false;$('#remote-copy').hidden=false;}}catch(e){$('#remote-status').textContent=e.message;}finally{button.disabled=false;}};
+$('#remote-copy').onclick=async()=>{try{await navigator.clipboard.writeText(remoteAddress);toast('Address copied');}catch(e){toast('Select and copy the address shown above.');}};

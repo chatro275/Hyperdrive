@@ -33,7 +33,7 @@ class FrameTests(unittest.TestCase):
         self.assertEqual(e.exception.code,403)
         with self.assertRaises(urllib.error.HTTPError) as e:self.request('/../server.py')
         self.assertEqual(e.exception.code,403)
-        with self.request('/frame') as r:self.assertIn(b'Your personal',r.read().replace(b'YOUR PERSONAL',b'Your personal'))
+        with self.request('/frame') as r:self.assertIn(b'/app.js',r.read())
 
     def upload(self, name, body=b'movie data', headers=None):
         from urllib.parse import quote
@@ -146,7 +146,7 @@ class FrameTests(unittest.TestCase):
 
     def test_hyperdrive_is_home_and_frame_is_separate(self):
         with self.request('/') as r:self.assertIn(b'hyperdrive.',r.read())
-        with self.request('/frame') as r:self.assertIn(b'YOUR PERSONAL CINEMA',r.read())
+        with self.request('/frame') as r:self.assertIn(b'data-page="Library"',r.read())
 
     def test_any_file_upload_is_download_only_and_zero_bytes_allowed(self):
         import urllib.parse

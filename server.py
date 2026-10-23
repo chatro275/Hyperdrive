@@ -302,6 +302,24 @@ class HealthMonitor:
 
 HEALTH=HealthMonitor(ROOT/'health-history.json')
 
+def remote_status(port=8080):
+    """Read only local network state; never expose identity, peers or login URLs."""
+    import subprocess, ipaddress
+    executable=shutil.which('tailscale')
+    if not executable:return {'ready':False,'message':'Install Tailscale on your Pi to enable private remote access.'}
+    try:
+        result=subprocess.run([executable,'status','--json'],capture_output=True,text=True,timeout=3,check=True)
+        state=json.loads(result.stdout)
+        if state.get('BackendState')!='Running':return {'ready':False,'message':'Tailscale is not connected. Run sudo tailscale up on your Pi.'}
+        addresses=state.get('TailscaleIPs',[]) or state.get('Self',{}).get('TailscaleIPs',[])
+        for raw in addresses:
+            address=ipaddress.ip_address(raw)
+            if address.version==4 and address in ipaddress.ip_network('100.64.0.0/10'):
+                return {'ready':True,'url':f'http://{address}:{int(port)}/','message':'Connect Tailscale on your other device, then open this address. External reachability has not been tested.'}
+        return {'ready':False,'message':'No private IPv4 address is available. Check Tailscale on your Pi.'}
+    except (OSError,ValueError,TypeError,subprocess.SubprocessError):
+        return {'ready':False,'message':'Unable to read Tailscale status. Check that its service is running.'}
+
 class Handler(BaseHTTPRequestHandler):
     def handle_one_request(self):
         try:super().handle_one_request()
@@ -337,6 +355,7 @@ class Handler(BaseHTTPRequestHandler):
                 name=query.get('name',[''])[0]
                 return self.file(file_path(folder,name),attachment=name)
             except (ValueError,OSError) as exc:return self.json({'error':str(exc)},503 if route!='/api/files/download' else 400)
+        if route == '/api/remote':return self.json(remote_status(self.server.server_port))
         if route == '/api/health':return self.json(HEALTH.snapshot())
         if route == '/api/movies':
             with connect() as c: rows = [dict(r) for r in c.execute('SELECT id,title,genre,year,favorite,progress FROM movies ORDER BY title')]

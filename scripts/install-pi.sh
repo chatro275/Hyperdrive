@@ -15,6 +15,24 @@ if [[ "$frame_dir" =~ [[:space:]%\\\"] ]]; then
   echo 'Place HyperMedia in a path without spaces, percent signs, quotes or backslashes.' >&2
   exit 1
 fi
+# Optional setup only: leave Kodi, storage and the existing portal service intact.
+if [[ "${1:-}" == "--remote-access" ]]; then
+  if ! command -v tailscale >/dev/null 2>&1; then
+    command -v curl >/dev/null 2>&1 || { echo 'Install curl first: sudo apt-get install curl' >&2; exit 1; }
+    remote_installer="$(mktemp)"
+    trap 'rm -f "$remote_installer"' EXIT
+    curl --fail --location --proto '=https' --tlsv1.2 https://tailscale.com/install.sh -o "$remote_installer"
+    sudo sh "$remote_installer"
+  fi
+  sudo systemctl enable --now tailscaled
+  sudo tailscale up
+  printf '\nSign in to the same Tailscale account on your Mac or phone.\n'
+  printf 'Open Settings > Remote access in Hyperdrive to find your address.\n'
+  printf 'The Pi must remain online. No router port forwarding is needed.\n'
+  tailscale ip -4
+  exit 0
+fi
+if [[ $# -gt 0 ]]; then echo 'Usage: bash scripts/install-pi.sh [--remote-access]' >&2; exit 1; fi
 sudo apt-get update
 sudo apt-get install -y python3 kodi pulseaudio-utils
 python3 -m unittest discover -s tests -v

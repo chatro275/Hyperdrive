@@ -268,3 +268,20 @@ Settings now groups Library, Sound & power, Hey Hyper, Updates and System. While
 Hey Hyper accepts polite phrases such as “could you pause the movie please”, “take me home”, “end the movie”, “check for software updates”, “update Hyperdrive” and “fix movie audio”. Home opens Hyperdrive; end movie stops playback, preserves resume progress and returns home. Updating checks GitHub on TV, asks before downloading and separately before installation; it never silently installs or restarts. This is expanded offline phrase matching, not unrestricted conversational AI.
 
 In Hey Hyper settings select a primary and optional second microphone, then Save microphone. Separate streams and recognizers share the offline model. The first microphone detecting a wake owns that turn; a brief cooldown suppresses the other mic's duplicate command. A failed input is retried while the working input continues. This is independent listening, not beamforming or echo cancellation; it may increase CPU use and needs testing on your Pi with both devices.
+
+## Simple dashboard and private remote access (2.9)
+
+Files is now the landing page: upload, create folders, search the current folder and download. Files, Movies and Settings are the main navigation. Settings separates library management, sound/power, voice, updates, remote access and diagnostics; movie grids and TV controls are hidden when working in unrelated settings.
+
+Remote access uses Tailscale on the Pi and each client device. Its personal plan is free for personal use; see https://tailscale.com/pricing. On your Pi after installing this update:
+
+```sh
+cd ~/HyperMedia
+bash scripts/install-pi.sh --remote-access
+```
+
+The optional installer downloads the official Tailscale Linux installer, enables its system service and runs `tailscale up`. Complete its account sign-in. Install Tailscale on your Mac/phone from https://tailscale.com/download, sign in to the same account, and connect. In Hyperdrive Settings → Remote access select Check connection. Bookmark the `http://100.x.y.z:8080/` address it shows. HTTP is transported inside the encrypted private network; this is not a public website or a separate cloud file store. No Tailscale Serve/Funnel or router port forwarding is configured. Files remain on the Pi USB drive.
+
+The Pi, USB and both devices need internet/network connectivity; uploads depend on both connections and are not resumable after interruption. Test from a phone with Wi-Fi disabled and Tailscale connected: upload a small file, download it and compare it. Local status checks cannot prove worldwide reachability. A firewall or custom Tailscale access policy may need to allow TCP 8080. Only trust devices/users that should manage the whole portal: there is no separate application login. Keep port 8080 off the public internet. Tailscale authentication happens in its own app/browser, never in Hyperdrive. `sudo tailscale down` disconnects remote access while local access remains. Reauthentication may be needed if device keys expire.
+
+Official installation and connection instructions: https://tailscale.com/docs/install/linux and https://tailscale.com/docs/how-to/connect-to-devices. No changes have been made to a live Pi by publishing this release; installation and sign-in on the Pi are required.
