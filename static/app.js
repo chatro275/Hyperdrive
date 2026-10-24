@@ -117,5 +117,32 @@ let remoteAddress='';
 $('#remote-check').onclick=async()=>{const button=$('#remote-check');button.disabled=true;$('#remote-status').textContent='Checking…';$('#remote-url').hidden=true;$('#remote-copy').hidden=true;try{const state=await api('/api/remote');$('#remote-status').textContent=state.message;if(state.ready){remoteAddress=state.url;$('#remote-url').href=state.url;$('#remote-url').textContent=state.url;$('#remote-url').hidden=false;$('#remote-copy').hidden=false;}}catch(e){$('#remote-status').textContent=e.message;}finally{button.disabled=false;}};
 $('#remote-copy').onclick=async()=>{try{await navigator.clipboard.writeText(remoteAddress);toast('Address copied');}catch(e){toast('Select and copy the address shown above.');}};
 
-async function airplayStatus(){try{const state=await api('/api/status');const tv=state.tv||{};const receiver=tv.airplay||{};$('#airplay-status').textContent=!tv.online?'TV service offline. Start Kodi on your Pi.':receiver.error||tv.error||(!receiver.installed?'Receiver not installed. Open installation instructions below.':receiver.running?'Receiver running · choose Hyperdrive on your Apple device.':'Ready to start.');$('#airplay-code').textContent=tv.online&&receiver.running?'Pairing code: '+receiver.pin:'';}catch(e){$('#airplay-status').textContent='Receiver status unavailable';}}
+async function airplayStatus(){try{const state=await api('/api/status');const tv=state.tv||{};const receiver=tv.airplay||{};$('#airplay-status').textContent=!tv.online?'TV service offline. Start Kodi on your Pi.':receiver.error||tv.error||(!receiver.installed?'Receiver not installed. Open installation instructions below.':receiver.active?'An Apple device is connected.':receiver.running?'Discoverable · choose Hyperdrive on your Apple device.':receiver.enabled?'Starting discovery…':'Discovery disabled.');$('#airplay-code').textContent=tv.online&&receiver.pin?'Pairing requested · code: '+receiver.pin:'';
+const select=$('#speaker-output');if(document.activeElement!==select&&!speakerDirty){const audio=tv.audio||{};select.innerHTML='<option value="">Choose a connected speaker</option>'+(audio.outputs||[]).map(d=>'<option value="'+escapeHTML(d.name)+'">'+escapeHTML(d.kind+' · '+d.label)+'</option>').join('');select.value=audio.selected_output||'';}
+}catch(e){$('#airplay-status').textContent='Receiver status unavailable';}}
+let speakerDirty=false;
+$('#speaker-output').onchange=()=>speakerDirty=true;
+$('#speaker-save').onclick=async()=>{try{if(!$('#speaker-output').value)throw Error('Choose a connected speaker first.');await api('/api/tv/control',{action:'audio_output',value:$('#speaker-output').value});speakerDirty=false;$('#speaker-status').textContent='Speaker change requested. Check the TV for any error.';}catch(e){$('#speaker-status').textContent=e.message;}};
+$('#screensaver-save').onclick=async()=>{try{await api('/api/tv/control',{action:'screensaver_enable',value:Number($('#screensaver-delay').value)});toast('Screensaver setting sent to TV');}catch(e){toast(e.message);}};
 airplayStatus();setInterval(airplayStatus,4000);
+
+let listening=null;
+$('#listen-stop').onclick=()=>{if(listening){listening.controller.abort();if(listening.context.state!=='closed')listening.context.close().catch(()=>{});}};
+$('#listen-start').onclick=async()=>{
+ const Audio=window.AudioContext||window.webkitAudioContext;if(!Audio){$('#listen-status').textContent='This browser does not support live audio. Try Safari or Chrome.';return;}
+ let context;try{context=new Audio({sampleRate:48000});}catch(e){$('#listen-status').textContent=e.message;return;}const controller=new AbortController();const session={context,controller};listening=session;$('#listen-start').disabled=true;$('#listen-stop').disabled=false;
+ let carry=new Uint8Array(0),next=0;
+ try{
+  await context.resume();$('#listen-status').textContent='Connecting to Pi audio…';
+  const response=await fetch('/api/audio/listen',{signal:controller.signal});if(!response.ok){const error=await response.json();throw Error(error.error||'Audio unavailable');}
+  const reader=response.body.getReader();$('#listen-status').textContent='Listening to Pi desktop audio on this device. Stop and reconnect after changing the Pi output.';
+  while(true){const {value,done}=await reader.read();if(done)break;const data=new Uint8Array(carry.length+value.length);data.set(carry);data.set(value,carry.length);const bytes=data.length-data.length%4;carry=data.slice(bytes);if(!bytes)continue;
+   const frames=bytes/4,buffer=context.createBuffer(2,frames,48000),view=new DataView(data.buffer);for(let ch=0;ch<2;ch++){const out=buffer.getChannelData(ch);for(let i=0;i<frames;i++)out[i]=view.getInt16(i*4+ch*2,true)/32768;}
+   if(context.state!=='running'||next-context.currentTime>.75)continue;
+   next=Math.max(next,context.currentTime+.08);const source=context.createBufferSource();source.buffer=buffer;source.connect(context.destination);source.start(next);next+=frames/48000;
+  }
+  $('#listen-status').textContent='Audio stream ended. Tap Listen to reconnect.';
+ }catch(e){$('#listen-status').textContent=e.name==='AbortError'?'Listening stopped.':e.message;}
+ finally{controller.abort();if(context.state!=='closed')await context.close();if(listening===session)listening=null;$('#listen-start').disabled=false;$('#listen-stop').disabled=true;}
+};
+window.addEventListener('pagehide',()=>{if(listening){listening.controller.abort();if(listening.context.state!=='closed')listening.context.close().catch(()=>{});}});

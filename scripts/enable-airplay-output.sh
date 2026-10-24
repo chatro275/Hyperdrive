@@ -9,7 +9,8 @@ if ! systemctl --user is-active --quiet pipewire; then
   echo 'An active PipeWire desktop session is required. No audio configuration changed.' >&2
   exit 1
 fi
-if ! find /usr/lib -name libpipewire-module-raop-discover.so -print -quit 2>/dev/null | grep -q .; then
+raop_module="$(find /usr/lib -name libpipewire-module-raop-discover.so -print -quit 2>/dev/null || true)"
+if [[ -z "$raop_module" ]]; then
   echo 'The PipeWire RAOP discovery module is missing. Install your OS package providing libpipewire-module-raop-discover.so first.' >&2
   exit 1
 fi

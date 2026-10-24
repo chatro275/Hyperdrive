@@ -320,6 +320,31 @@ def remote_status(port=8080):
     except (OSError,ValueError,TypeError,subprocess.SubprocessError):
         return {'ready':False,'message':'Unable to read Tailscale status. Check that its service is running.'}
 
+AUDIO_LISTENERS=threading.BoundedSemaphore(2)
+
+def start_audio_capture():
+    import subprocess
+    executable=shutil.which('parec')
+    if not executable:raise ValueError('Install pulseaudio-utils on the Pi for browser listening.')
+    env=os.environ.copy();runtime=env.get('XDG_RUNTIME_DIR') or '/run/user/'+str(os.getuid())
+    env['XDG_RUNTIME_DIR']=runtime;env.setdefault('PULSE_SERVER','unix:'+runtime+'/pulse/native')
+    try:
+        result=subprocess.run(['pactl','get-default-sink'],env=env,capture_output=True,text=True,timeout=3,check=True)
+        name=result.stdout.strip()
+        if not re.fullmatch(r'[A-Za-z0-9_.:-]+',name):raise ValueError('No valid desktop output is selected.')
+        return subprocess.Popen([executable,'--device='+name+'.monitor','--format=s16le','--rate=48000','--channels=2','--latency-msec=50'],env=env,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,stdin=subprocess.DEVNULL)
+    except (OSError,subprocess.SubprocessError) as exc:
+        raise ValueError('Desktop audio unavailable. Start the Pi desktop and select a PulseAudio/PipeWire output.') from exc
+
+def stop_audio_capture(process):
+    import subprocess
+    if process.poll() is None:
+        process.terminate()
+        try:process.wait(timeout=2)
+        except subprocess.TimeoutExpired:process.kill();process.wait(timeout=2)
+    if process.stdout:process.stdout.close()
+
+
 class Handler(BaseHTTPRequestHandler):
     def handle_one_request(self):
         try:super().handle_one_request()
@@ -355,6 +380,7 @@ class Handler(BaseHTTPRequestHandler):
                 name=query.get('name',[''])[0]
                 return self.file(file_path(folder,name),attachment=name)
             except (ValueError,OSError) as exc:return self.json({'error':str(exc)},503 if route!='/api/files/download' else 400)
+        if route == '/api/audio/listen':return self.listen_audio()
         if route == '/api/remote':return self.json(remote_status(self.server.server_port))
         if route == '/api/health':return self.json(HEALTH.snapshot())
         if route == '/api/movies':
@@ -503,9 +529,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json({'ok': True})
             if route == '/api/tv/control':
                 action = data.get('action')
-                if action not in {'airplay_start','airplay_stop','hyperdrive', 'pause', 'stop', 'left', 'right', 'up', 'down', 'select', 'back', 'home', 'volume', 'mute', 'audio_track', 'audio_diagnose','end_movie','audio_settings', 'audio_setup', 'audio_test', 'airplay_settings', 'updates', 'power_menu', 'reboot', 'shutdown'}:
+                if action not in {'audio_output','screensaver_enable','screensaver_preview','airplay_disable','airplay_start','airplay_stop','hyperdrive', 'pause', 'stop', 'left', 'right', 'up', 'down', 'select', 'back', 'home', 'volume', 'mute', 'audio_track', 'audio_diagnose','end_movie','audio_settings', 'audio_setup', 'audio_test', 'airplay_settings', 'updates', 'power_menu', 'reboot', 'shutdown'}:
                     raise ValueError('Unknown TV action')
                 command = {'action':action}
+                if action=='audio_output':
+                    value=data.get('value')
+                    if not isinstance(value,str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,240}',value):raise ValueError('Invalid audio output')
+                    command['value']=value
+                if action=='screensaver_enable':
+                    value=data.get('value',5)
+                    if type(value) is not int or value not in (1,2,5,10,15,30):raise ValueError('Choose a supported screensaver delay')
+                    command['value']=value
                 if action in {'volume', 'audio_track'}:
                     value = data.get('value')
                     if type(value) is not int or not 0 <= value <= (100 if action == 'volume' else 255):
@@ -571,6 +605,32 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             if temp is not None: temp.unlink(missing_ok=True)
             self.connection.settimeout(None)
+    def listen_audio(self):
+        import select
+        if not AUDIO_LISTENERS.acquire(blocking=False):return self.json({'error':'Two audio listeners are already connected.'},429)
+        process=None;headers=False
+        try:
+            process=start_audio_capture()
+            ready,_,_=select.select([process.stdout],[],[],5)
+            if not ready or process.poll() is not None:raise ValueError('No desktop audio capture. Select a connected output and disable Kodi passthrough.')
+            first=process.stdout.read1(9600)
+            if not first:raise ValueError('The selected desktop output has no monitor stream.')
+            self.send_response(200);self.send_header('Content-Type','application/octet-stream');self.send_header('Cache-Control','no-store');self.send_header('X-Audio-Format','s16le;rate=48000;channels=2');self.send_header('Connection','close');self.end_headers();headers=True
+            self.close_connection=True;self.connection.settimeout(10);self.wfile.write(first);self.wfile.flush()
+            deadline=time.monotonic()+3600
+            while time.monotonic()<deadline:
+                ready,_,_=select.select([process.stdout],[],[],10)
+                if not ready:break
+                block=process.stdout.read1(9600)
+                if not block:break
+                self.wfile.write(block);self.wfile.flush()
+        except (OSError,ValueError) as exc:
+            if not headers:self.json({'error':str(exc)},503)
+        finally:
+            try:
+                if process is not None:stop_audio_capture(process)
+            finally:AUDIO_LISTENERS.release()
+
     def file(self, p, ranges=False, attachment=None):
         if not p.is_file(): return self.send_error(404)
         size = p.stat().st_size; start = 0; end = size-1; partial = False

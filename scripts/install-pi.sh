@@ -32,6 +32,14 @@ if [[ "${1:-}" == "--remote-access" ]]; then
   tailscale ip -4
   exit 0
 fi
+if [[ "${1:-}" == "--wireless-audio" ]]; then
+  sudo apt-get update
+  sudo apt-get install -y pulseaudio-utils bluez libspa-0.2-bluetooth libpipewire-0.3-modules avahi-daemon
+  sudo systemctl enable --now bluetooth avahi-daemon
+  bash scripts/enable-airplay-output.sh
+  printf '\nRestart the Pi, then pair Bluetooth speakers using the desktop menu. Select your speaker in Hyperdrive Sound & power.\n'
+  exit 0
+fi
 if [[ "${1:-}" == "--airplay" ]]; then
   sudo apt-get update
   sudo apt-get install -y uxplay avahi-daemon gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-x gstreamer1.0-pulseaudio
@@ -45,7 +53,7 @@ if [[ "${1:-}" == "--airplay" ]]; then
   printf 'Kodi must run in the logged-in Pi desktop. Start Screen Mirroring on your Apple device and select Hyperdrive.\n'
   exit 0
 fi
-if [[ $# -gt 0 ]]; then echo 'Usage: bash scripts/install-pi.sh [--remote-access|--airplay]' >&2; exit 1; fi
+if [[ $# -gt 0 ]]; then echo 'Usage: bash scripts/install-pi.sh [--remote-access|--airplay|--wireless-audio]' >&2; exit 1; fi
 sudo apt-get update
 sudo apt-get install -y python3 kodi pulseaudio-utils
 python3 -m unittest discover -s tests -v

@@ -1,7 +1,7 @@
 import json, time
 import xbmc, xbmcgui
 from common import api
-from controls import rpc, audio_status, power_status, set_track, execute_power, restore_movie_route, diagnose_movie_audio, AirPlayReceiver
+from controls import rpc, audio_status, power_status, set_track, execute_power, restore_movie_route, diagnose_movie_audio, AirPlayReceiver, output_devices, select_output, configure_screensaver, load_audio_profile
 
 class Playback(xbmc.Player):
     movie = None
@@ -40,8 +40,11 @@ class Playback(xbmc.Player):
     def command(self, command):
         action = command['action']
         if action == 'airplay_start':
-            receiver.start()
-            self.save();self.stop()
+            receiver.set_enabled(True)
+        elif action == 'airplay_disable':receiver.set_enabled(False)
+        elif action == 'audio_output':select_output(command['value'])
+        elif action == 'screensaver_enable':configure_screensaver(command.get('value',5))
+        elif action == 'screensaver_preview':xbmc.executebuiltin('ActivateScreensaver')
         elif action == 'airplay_stop':
             receiver.stop();xbmc.executebuiltin('RunScript(script.hyperdrive)')
         elif action == 'play':
@@ -107,8 +110,16 @@ monitor = xbmc.Monitor()
 player = Playback()
 opened = False
 last_save = 0
+last_devices=0
+devices=[]
+try:
+    if not load_audio_profile().get("screensaver_configured"):configure_screensaver()
+except Exception as exc:player.error=str(exc)
 while not monitor.abortRequested():
     try:
+        receiver.tick(player)
+        if time.monotonic()-last_devices>10:
+            devices=output_devices();last_devices=time.monotonic()
         if player.isPlayingVideo() and player.movie and player.getPlayingFile() == player.movie['path']:
             duration = player.getTotalTime()
             if duration: player.progress = player.getTime() / duration
@@ -116,6 +127,8 @@ while not monitor.abortRequested():
                 player.save(); last_save = time.monotonic()
         try: audio = audio_status()
         except Exception: audio = {}
+        audio['outputs']=devices
+        audio['selected_output']=load_audio_profile().get('sink','')
         try: power = power_status()
         except Exception: power = {}
         title = player.movie['title'] if player.movie and player.isPlayingVideo() else ''

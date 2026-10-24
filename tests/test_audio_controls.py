@@ -1,4 +1,4 @@
-import importlib.util, json, sys, types, unittest
+import io, importlib.util, json, sys, types, unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -25,6 +25,7 @@ class AudioControlsTests(unittest.TestCase):
         with patch.dict(sys.modules,{'xbmc':kodi,'xbmcgui':gui,'common':types.SimpleNamespace(api=Mock())}):spec.loader.exec_module(self.module)
         self.module.test_sound=Mock()
         self.module.audio_profile=Mock(return_value=Mock())
+        self.module.audio_profile.return_value.read_text.return_value='{}'
     def test_hdmi_pcm_stereo_and_unmute(self):
         self.module.hdmi_setup()
         self.assertEqual(self.values,{'audiooutput.audiodevice':'ALSA:hdmi','audiooutput.passthrough':False,'audiooutput.channels':1})
@@ -109,15 +110,15 @@ class AirPlayTests(unittest.TestCase):
     def prepare(self):
         self.values['services.airplay']=True
         self.module.audio_profile.return_value.read_text.return_value='{"sink":"alsa_output.hdmi"}'
-        process=Mock();process.poll.return_value=None
+        process=Mock();process.poll.return_value=None;process.stdout=io.StringIO()
         return process
     def test_start_pairing_and_selected_audio_then_restore(self):
         import os
         process=self.prepare();receiver=self.module.AirPlayReceiver()
         with patch('shutil.which',return_value='/usr/bin/uxplay'),patch.dict(os.environ,{'DISPLAY':':0'},clear=True),patch.object(self.module.subprocess,'run',return_value=types.SimpleNamespace(stdout='-pin -fs',stderr='')),patch.object(self.module.subprocess,'Popen',return_value=process) as spawn:
             result=receiver.start();receiver.start()
-        self.assertTrue(result['running']);self.assertEqual(len(result['pin']),4)
-        args=spawn.call_args.args[0];self.assertIn('pulsesink device=alsa_output.hdmi',args);self.assertIn('-pin',args)
+        self.assertTrue(result['running']);self.assertEqual(result['pin'],'')
+        args=spawn.call_args.args[0];self.assertIn('pulsesink',args);self.assertIn('-pin',args)
         self.assertFalse(self.values['services.airplay']);spawn.assert_called_once()
         receiver.stop();process.terminate.assert_called_once();self.assertTrue(self.values['services.airplay']);self.assertEqual(receiver.pin,'')
     def test_missing_dependency_and_headless_are_clear_errors(self):
@@ -145,6 +146,40 @@ class AirPlayTests(unittest.TestCase):
         with patch('shutil.which',return_value='/usr/bin/uxplay'):result=receiver.status()
         self.assertFalse(result['running']);self.assertIn('exited',result['error']);self.assertEqual(result['pin'],'');self.assertTrue(self.values['services.airplay'])
     def test_unresponsive_owned_process_is_killed(self):
-        receiver=self.module.AirPlayReceiver();process=Mock();process.poll.return_value=None
+        receiver=self.module.AirPlayReceiver();process=Mock();process.poll.return_value=None;process.stdout=io.StringIO()
         process.wait.side_effect=[self.module.subprocess.TimeoutExpired('uxplay',3),0];receiver.process=process
         receiver.stop();process.kill.assert_called_once();self.assertIsNone(receiver.process)
+    def test_pairing_code_only_after_request_and_expires(self):
+        receiver=self.module.AirPlayReceiver();receiver.enabled=False
+        self.assertEqual(receiver.pin,'')
+        receiver.events.put(('pin','0123'));receiver.tick(Mock())
+        self.assertEqual(receiver.pin,'0123');self.dialog.notification.assert_called_once()
+        receiver.pin_until=0;self.assertEqual(receiver.status()['pin'],'')
+    def test_disconnect_returns_home_and_restarts_discovery(self):
+        receiver=self.module.AirPlayReceiver();receiver.process=self.prepare();receiver.active=True
+        receiver.events.put(('disconnected',''))
+        with patch('shutil.which',return_value='/usr/bin/uxplay'),patch.object(receiver,'start') as start:
+            receiver.tick(Mock());start.assert_called_once()
+        self.assertFalse(receiver.active)
+        self.module.xbmc.executebuiltin.assert_called_with('RunScript(script.hyperdrive)')
+    def test_connected_preserves_movie_progress_once(self):
+        receiver=self.module.AirPlayReceiver();receiver.enabled=False;player=Mock()
+        receiver.events.put(('connected',''));receiver.events.put(('connected',''))
+        with patch.object(self.module,'apply_saved_desktop_route'):receiver.tick(player)
+        player.save.assert_called_once();player.stop.assert_called_once()
+    def test_event_parser_discards_other_logs(self):
+        parse=self.module.AirPlayReceiver.parse_event
+        self.assertEqual(parse('*** CLIENT MUST NOW ENTER PIN = "0123" AS AIRPLAY PASSWORD'),('pin','0123'))
+        self.assertEqual(parse('Open connections: 0'),('disconnected',''))
+        self.assertIsNone(parse('secret key=abcdef'))
+    def test_disabled_receiver_does_not_restart(self):
+        receiver=self.module.AirPlayReceiver();receiver.set_enabled(False)
+        with patch.object(receiver,'start') as start:receiver.tick(Mock());start.assert_not_called()
+    def test_disconnected_output_rejected(self):
+        with patch.object(self.module,'desktop_sinks',return_value=[]):
+            with self.assertRaisesRegex(ValueError,'not connected'):self.module.select_output('missing')
+    def test_screensaver_configuration(self):
+        self.values.update({'screensaver.mode':'old','screensaver.time':10})
+        self.module.configure_screensaver(5)
+        self.assertEqual(self.values['screensaver.time'],5)
+        self.assertEqual(self.values['screensaver.mode'],'screensaver.xbmc.builtin.dim')

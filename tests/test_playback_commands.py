@@ -33,10 +33,10 @@ class PlaybackTests(unittest.TestCase):
     def test_airplay_start_preserves_movie_progress(self):
         self.player.tracking=True;self.player.progress=.5
         self.player.command({'action':'airplay_start'})
-        self.receiver.start.assert_called_once();self.player.stop.assert_called_once()
-        self.api.assert_called_once_with('/api/movies/3',{'progress':.5})
+        self.receiver.set_enabled.assert_called_once_with(True);self.player.stop.assert_not_called()
+        self.api.assert_not_called()
     def test_failed_airplay_start_keeps_movie_playing(self):
-        self.receiver.start.side_effect=ValueError('Not installed')
+        self.receiver.set_enabled.side_effect=ValueError('Not installed')
         with self.assertRaises(ValueError):self.player.command({'action':'airplay_start'})
         self.player.stop.assert_not_called()
     def test_return_home_stops_receiver(self):

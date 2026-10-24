@@ -256,4 +256,35 @@ class FrameTests(unittest.TestCase):
         commands=json.load(self.request('/api/tv/poll',{}))['commands']
         self.assertEqual([c['action'] for c in commands],['airplay_start','airplay_stop'])
 
+
+    def test_browser_audio_stream_cleanup(self):
+        import subprocess,sys
+        process=subprocess.Popen([sys.executable,'-c','import sys,time; sys.stdout.buffer.write(bytes(range(256))*100); sys.stdout.flush(); time.sleep(30)'],stdout=subprocess.PIPE)
+        with patch.object(server,'start_audio_capture',return_value=process):
+            with self.request('/api/audio/listen') as response:
+                self.assertEqual(response.status,200)
+                self.assertEqual(response.read(256),bytes(range(256)))
+            # A stalled producer is closed after the bounded read timeout.
+            process.terminate();process.wait(timeout=3)
+            for _ in range(100):
+                if process.stdout.closed:break
+                time.sleep(.02)
+            self.assertTrue(process.stdout.closed)
+    def test_browser_audio_missing_backend_and_capacity(self):
+        with patch.object(server,'start_audio_capture',side_effect=ValueError('Desktop unavailable')):
+            with self.assertRaises(urllib.error.HTTPError) as error:self.request('/api/audio/listen')
+            self.assertEqual(error.exception.code,503)
+        server.AUDIO_LISTENERS.acquire();server.AUDIO_LISTENERS.acquire()
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as error:self.request('/api/audio/listen')
+            self.assertEqual(error.exception.code,429)
+        finally:server.AUDIO_LISTENERS.release();server.AUDIO_LISTENERS.release()
+    def test_browser_capture_uses_output_monitor(self):
+        from unittest.mock import Mock
+        import subprocess
+        with patch.object(server.shutil,'which',return_value='/usr/bin/parec'),patch.object(subprocess,'run',return_value=Mock(stdout='hdmi-output\n')),patch.object(subprocess,'Popen') as spawn:
+            server.start_audio_capture()
+        self.assertIn('--device=hdmi-output.monitor',spawn.call_args.args[0])
+        self.assertIn('--rate=48000',spawn.call_args.args[0])
+
 if __name__=='__main__':unittest.main()

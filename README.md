@@ -286,21 +286,35 @@ The Pi, USB and both devices need internet/network connectivity; uploads depend 
 
 Official installation and connection instructions: https://tailscale.com/docs/install/linux and https://tailscale.com/docs/how-to/connect-to-devices. No changes have been made to a live Pi by publishing this release; installation and sign-in on the Pi are required.
 
-## AirPlay mirroring (2.10)
+## AirPlay, speakers and phone/Mac listening (2.11)
 
-Hyperdrive integrates the optional open-source UxPlay receiver alongside Kodi. It supports Apple screen mirroring with audio, compatible audio-only reception, and Mac extended-display mode where offered by macOS. This is not full Apple TV compatibility: DRM-protected video and AirPlay 2 multi-room audio are not supported. Direct in-app video casting depends on the installed UxPlay version and app; use Screen Mirroring as the primary route. See https://github.com/FDH2/UxPlay.
-
-After installing this Hyperdrive update, run on the Pi:
+Install the update and restart Kodi. The optional UxPlay receiver stays discoverable while Kodi runs in a logged-in Pi desktop. Install it once with:
 
 ```sh
 cd ~/HyperMedia
 bash scripts/install-pi.sh --airplay
 ```
 
-This installs UxPlay, Avahi and GStreamer packages. UxPlay 1.67+ is required for pairing-code support; older OS packages are rejected with upgrade guidance. No source builds, OS upgrades or receiver startup are performed automatically. Kodi must run inside a logged-in Raspberry Pi desktop with X11 or Wayland and desktop PulseAudio/PipeWire audio. This integration does not target Pi OS Lite/KMS-only Kodi.
+Select Hyperdrive in Apple Screen Mirroring. A pairing code appears on the TV and Settings → AirPlay when the sender requests one; trusted devices may not ask again. Connecting saves/stops the current movie. Disconnect events close the receiver window, return to Hyperdrive and restart discovery. Supported UxPlay versions also disable the frozen-window behaviour and use a connection timeout. Unexpected exits retry after 30 seconds. Disable discovery explicitly in Settings → AirPlay to keep it off.
 
-Choose AirPlay mirroring on the Hyperdrive TV home screen, Settings → AirPlay in the web portal, or say “Hey Hyper, start AirPlay”. Movie playback stops with resume progress saved. On your iPhone/iPad/Mac select Control Centre → Screen Mirroring → Hyperdrive. The current pairing code appears in a TV notification and the web panel. Previously trusted clients may not be prompted again. Both devices must be on the same local network with multicast discovery allowed; Tailscale alone does not relay that discovery.
+UxPlay requires version 1.67+, X11/Wayland and desktop PulseAudio/PipeWire. It does not provide DRM playback or AirPlay 2 multi-room support. Discovery needs the same local network with multicast; Tailscale does not relay it. See https://github.com/FDH2/UxPlay. TV focus and disconnect timing depend on the installed receiver/compositor and require testing on the Pi.
 
-The receiver targets 1280×720 and uses a fullscreen desktop window; actual focus/fullscreen behaviour depends on your compositor. Kodi remains open underneath. Stop AirPlay in the web portal, say “Hey Hyper, stop AirPlay”, or return to Movies/Home to stop the owned receiver process. Normal Kodi shutdown also stops it. TV remote control of the external receiver window is not implemented; the web or Apple device is the reliable control path. Stopping Screen Mirroring on the Apple device alone leaves the receiver available until you stop it in Hyperdrive.
+In Settings → Sound & power:
 
-Kodi’s built-in AirPlay receiver is temporarily disabled during a UxPlay session and restored when it stops. UxPlay uses the HDMI desktop sink saved by Fix HDMI sound if present; otherwise it uses the desktop default. If silent, choose the TV output in the Pi desktop audio settings and check its volume. Kodi-specific volume controls do not control UxPlay. A stopped/crashed receiver is reported, not silently restarted. Tests mock the receiver and validate command routing, pairing arguments, cleanup and setting restoration; Apple-device discovery, actual audio/video and TV focus require testing on your Pi.
+- **Speaker output:** select a connected desktop output, including HDMI, Bluetooth or compatible AirPlay/Wi-Fi speakers. This switches Kodi to desktop stereo PCM with passthrough disabled and routes Kodi/UxPlay to that speaker. Bluetooth speakers must first be paired and connected in the Pi desktop.
+- **Listen on this phone or Mac:** click Listen on the receiving device. The browser plays the Pi's desktop output, including movies routed through the desktop backend. This is Pi → phone/Mac audio, not microphone capture or a native AirPlay receiver on the phone. Keep the page open; browsers may suspend background audio. There is network delay and no automatic lip-sync correction. Direct ALSA/passthrough sound cannot be captured. Stop/reconnect after changing outputs. Mute the physical TV, rather than Kodi, to avoid hearing both.
+- **Screensaver:** the first start enables Kodi's built-in Dim screensaver after five idle minutes. Choose a delay or preview it here. Kodi controls playback/idle behaviour; external AirPlay uses UxPlay's screensaver inhibition when available.
+
+Browser listening requires `pulseaudio-utils`, the portal running as the desktop user, and a reachable PulseAudio/PipeWire socket. It streams uncompressed stereo PCM (about 1.5 Mbps per listener), with up to two listeners and a one-hour session limit. Stop closes capture. Like files and controls, audio is accessible to trusted LAN/tailnet users of the portal; never expose port 8080 publicly.
+
+For optional Bluetooth and compatible Wi-Fi speaker discovery:
+
+```sh
+cd ~/HyperMedia
+bash scripts/install-pi.sh --wireless-audio
+sudo reboot
+```
+
+This installs Bluetooth/PipeWire modules and configures RAOP discovery for the existing PipeWire desktop. It does not replace a PulseAudio setup. RAOP/AirPlay speaker compatibility varies; password-protected speakers may need manual configuration, and AirPlay 2 multi-room is not supported. See https://docs.pipewire.org/page_module_raop_discover.html.
+
+Automated checks cover routing, pairing/disconnect events, stream bytes and capture cleanup. They cannot establish audible sound, Apple interoperability or TV focus without the physical Pi and devices.

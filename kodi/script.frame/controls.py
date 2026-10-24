@@ -115,7 +115,7 @@ def route_desktop(sink):
     for stream in streams:
         props=stream.get('properties', {})
         app=(props.get('application.name','')+' '+props.get('application.process.binary','')).lower()
-        if 'kodi' not in app:continue
+        if 'kodi' not in app and 'uxplay' not in app:continue
         index=str(stream['index'])
         pactl('move-sink-input', index, name)
         pactl('set-sink-input-mute', index, '0')
@@ -152,7 +152,7 @@ def hdmi_setup():
     except Exception:
         for key in reversed(changed):set_setting(key,old[key])
         raise
-    audio_profile().write_text(json.dumps({'sink':devices[choice].get('sink',{}).get('name','')}))
+    save_audio_profile(sink=devices[choice].get('sink',{}).get('name',''))
     if xbmcgui.Dialog().yesno('HDMI configured', 'Run the left and right sound test now? Stop any current movie first. If sound is still missing, check the TV mute/volume and selected HDMI port.'):
         test_sound()
 
@@ -232,68 +232,165 @@ def diagnose_movie_audio():
     xbmcgui.Dialog().textviewer('Movie audio diagnosis',message)
     return issues
 
+def load_audio_profile():
+    try:
+        state=json.loads(audio_profile().read_text())
+        return state if isinstance(state,dict) else {}
+    except (OSError,ValueError):return {}
+
+def save_audio_profile(**values):
+    state=load_audio_profile();state.update(values);path=audio_profile();temp=path.with_suffix('.tmp')
+    temp.write_text(json.dumps(state));temp.replace(path)
+
+def output_devices():
+    devices=[]
+    for sink in desktop_sinks():
+        name=sink.get('name','');props=sink.get('properties',{})
+        if props.get('device.class')=='monitor':continue
+        kind='Bluetooth' if 'bluez' in name else 'AirPlay / Wi-Fi' if 'raop' in name.lower() or props.get('raop.ip') else 'HDMI' if 'hdmi' in name.lower() else 'Speaker / system'
+        devices.append({'name':name,'label':sink.get('description',name),'kind':kind})
+    return devices
+
+def apply_saved_desktop_route():
+    name=load_audio_profile().get('sink','')
+    if not name:return
+    sink=next((s for s in desktop_sinks() if s.get('name')==name),None)
+    if not sink:raise ValueError('Selected speaker is disconnected. Reconnect it or select another output.')
+    streams=json.loads(pactl('--format=json','list','sink-inputs'))
+    for stream in streams:
+        props=stream.get('properties',{});app=(props.get('application.name','')+' '+props.get('application.process.binary','')).lower()
+        if 'kodi' in app or 'uxplay' in app:pactl('move-sink-input',str(stream['index']),name)
+
+def select_output(name):
+    sink=next((s for s in desktop_sinks() if s.get('name')==name),None)
+    if not sink:raise ValueError('Output is not connected. Refresh devices first.')
+    options=rpc('Settings.GetSettings',level='expert',filter={'section':'system','category':'audio'}).get('settings',[])
+    outputs=next((s.get('options',[]) for s in options if s['id']=='audiooutput.audiodevice'),[])
+    output=next((o['value'] for o in outputs if o['value']=='PULSE:'+name),None)
+    if output is None:output=next((o['value'] for o in outputs if o['value'].upper()=='PULSE:DEFAULT'),None)
+    if output is None:raise ValueError('Kodi must use the desktop PulseAudio/PipeWire backend for shared Bluetooth, Wi-Fi and browser audio.')
+    values={'audiooutput.audiodevice':output,'audiooutput.passthrough':False,'audiooutput.channels':1}
+    old={k:rpc('Settings.GetSettingValue',setting=k)['value'] for k in values};changed=[]
+    try:
+        for key,value in values.items():set_setting(key,value);changed.append(key)
+        route_desktop(sink);audible_volume();save_audio_profile(sink=name)
+    except Exception:
+        for key in reversed(changed):set_setting(key,old[key])
+        raise
+
+def configure_screensaver(minutes=5):
+    old={k:rpc('Settings.GetSettingValue',setting=k)['value'] for k in ('screensaver.mode','screensaver.time')}
+    try:
+        set_setting('screensaver.mode','screensaver.xbmc.builtin.dim');set_setting('screensaver.time',minutes)
+    except Exception:
+        for k,v in old.items():set_setting(k,v)
+        raise
+    save_audio_profile(screensaver_configured=True)
+
 class AirPlayReceiver:
-    """Own one UxPlay receiver in Kodi's logged-in desktop session."""
+    """Background discovery; only recognised lifecycle events reach the UI."""
     def __init__(self):
+        import queue
         self.process=None;self.pin='';self.error='';self.previous_airplay=None
+        self.active=False;self.events=queue.Queue(maxsize=64);self.retry_at=0;self.pin_until=0
+        self.enabled=load_audio_profile().get('airplay_enabled',True)
+    @staticmethod
+    def parse_event(line):
+        import re
+        match=re.search(r'CLIENT MUST NOW ENTER PIN\s*=\s*"(\d{4})"',line)
+        if match:return ('pin',match.group(1))
+        if 'raop_rtp_mirror starting mirroring' in line or 'raop_rtp starting audio' in line:return ('connected','')
+        if 'TEARDOWN request' in line or 'Open connections: 0' in line or 'lost connection with client' in line:return ('disconnected','')
+        return None
+    def read_events(self,process,events):
+        try:
+            while True:
+                line=process.stdout.readline(8192)
+                if not line:break
+                event=self.parse_event(line)
+                if event:
+                    try:events.put_nowait(event)
+                    except Exception:pass
+        except (OSError,ValueError):pass
+        # Raw logs, keys, device identities and media metadata are never saved.
     def status(self):
-        import shutil
+        import shutil,time
         if self.process is not None and self.process.poll() is not None:
             code=self.process.returncode
-            self.process=None;self.pin=''
-            self.error='AirPlay receiver exited (code {}). Check the Pi desktop, Avahi and GStreamer packages.'.format(code)
-            self.restore_kodi()
-        return {'installed':bool(shutil.which('uxplay')),'running':self.process is not None,'name':'Hyperdrive','pin':self.pin,'error':self.error}
+            self.stop();self.error='AirPlay receiver exited (code {}). Check desktop audio and receiver packages.'.format(code)
+            self.retry_at=time.monotonic()+30
+        if time.monotonic()>self.pin_until:self.pin=''
+        return {'installed':bool(shutil.which('uxplay')),'running':self.process is not None,'active':self.active,'enabled':self.enabled,'name':'Hyperdrive','pin':self.pin,'error':self.error}
     def restore_kodi(self):
         if self.previous_airplay is not None:
-            old=self.previous_airplay
-            try:set_setting('services.airplay',old)
+            try:set_setting('services.airplay',self.previous_airplay)
             except Exception as exc:self.error='Could not restore Kodi AirPlay: '+str(exc)
             else:self.previous_airplay=None
+    def set_enabled(self,value):
+        self.enabled=value;save_audio_profile(airplay_enabled=value)
+        if not value:self.stop()
+        else:self.retry_at=0;self.start()
     def start(self):
-        import os, shutil, secrets, re
+        import os,shutil,threading,queue
         if self.status()['running']:return self.status()
         executable=shutil.which('uxplay')
-        if not executable:raise ValueError('Install the receiver on the Pi: bash scripts/install-pi.sh --airplay')
-        if not (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
-            raise ValueError('AirPlay mirroring needs Kodi running in a Raspberry Pi desktop session. Pi OS Lite is not supported by this integration.')
-        help_result=subprocess.run([executable,'-h'],capture_output=True,text=True,timeout=5)
-        help_text=help_result.stdout+help_result.stderr
-        if '-pin' not in help_text:raise ValueError('UxPlay 1.67 or newer is required for pairing codes. Update the Pi OS package before starting AirPlay.')
-        self.pin=str(1000+secrets.randbelow(9000));self.error=''
-        sink='pulsesink'
-        try:
-            saved=json.loads(audio_profile().read_text()).get('sink','')
-            if saved and re.fullmatch(r'[A-Za-z0-9_.:-]+',saved):sink+=' device='+saved
-        except (OSError,ValueError):pass
+        if not executable:raise ValueError('Install on the Pi: bash scripts/install-pi.sh --airplay')
+        if not (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):raise ValueError('AirPlay requires a logged-in Pi desktop session.')
+        result=subprocess.run([executable,'-h'],capture_output=True,text=True,timeout=5)
+        help_text=result.stdout+result.stderr
+        if '-pin' not in help_text:raise ValueError('UxPlay 1.67 or newer is required.')
+        self.pin='';self.error='';self.active=False
         video='waylandsink' if os.environ.get('WAYLAND_DISPLAY') else 'ximagesink'
-        args=[executable,'-n','Hyperdrive','-fs','-s','1280x720','-pin',self.pin,'-vs',video,'-as',sink]
+        args=[executable,'-n','Hyperdrive','-fs','-s','1280x720','-pin','-d','-vs',video,'-as','pulsesink','-reset','5']
+        if '-nofreeze' in help_text:args+=['-nofreeze']
+        if '-scrsv' in help_text:args+=['-scrsv','1']
+        buffer=shutil.which('stdbuf')
+        if buffer:args=[buffer,'-oL','-eL']+args
         try:
-            # Avoid advertising two incompatible AirPlay receivers at once.
             old=rpc('Settings.GetSettingValue',setting='services.airplay')['value']
-            if old:
-                self.previous_airplay=old;set_setting('services.airplay',False)
-            self.process=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-        except Exception:
-            self.pin='';self.restore_kodi();raise
-        state=self.status()
-        if not state['running']:raise ValueError(state['error'])
-        xbmcgui.Dialog().notification('AirPlay · Hyperdrive','Screen Mirroring → Hyperdrive. Pairing code: '+self.pin,time=15000)
+            if old:self.previous_airplay=old;set_setting('services.airplay',False)
+            self.process=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
+            self.events=queue.Queue(maxsize=64)
+            threading.Thread(target=self.read_events,args=(self.process,self.events),daemon=True).start()
+        except Exception:self.pin='';self.restore_kodi();raise
         return self.status()
+    def tick(self,player):
+        import time,queue,shutil
+        self.status()
+        while True:
+            try:kind,value=self.events.get_nowait()
+            except queue.Empty:break
+            if kind=='pin':
+                self.pin=value;self.pin_until=time.monotonic()+90
+                xbmc.executebuiltin('ActivateWindow(home)')
+                xbmcgui.Dialog().notification('AirPlay pairing code',value,time=20000)
+            elif kind=='connected':
+                if not self.active:player.save();player.stop()
+                self.active=True;self.pin=''
+                try:apply_saved_desktop_route()
+                except Exception as exc:self.error=str(exc)
+            elif kind=='disconnected' and self.active:
+                self.stop();self.retry_at=0
+                xbmc.executebuiltin('RunScript(script.hyperdrive)')
+                break
+        if self.enabled and self.process is None and time.monotonic()>=self.retry_at:
+            self.retry_at=time.monotonic()+30
+            if shutil.which('uxplay'):
+                try:self.start()
+                except Exception as exc:self.error=str(exc)
     def stop(self):
-        if self.process is not None:
-            process=self.process
+        import queue
+        process=self.process
+        if process is not None:
             if process.poll() is None:
                 process.terminate()
                 try:process.wait(timeout=3)
                 except subprocess.TimeoutExpired:process.kill();process.wait(timeout=3)
-            self.process=None
-        self.pin='';self.restore_kodi()
+            if process.stdout:process.stdout.close()
+        self.process=None;self.pin='';self.active=False;self.events=queue.Queue(maxsize=64)
+        self.restore_kodi()
 
 def airplay_menu():
     state=api('/api/status').get('tv',{}).get('airplay',{})
-    if state.get('running'):
-        if xbmcgui.Dialog().yesno('AirPlay · Hyperdrive','Receiver is running. Pairing code: '+state.get('pin','')+'\nStop AirPlay and return to Hyperdrive?'):
-            api('/api/tv/control',{'action':'airplay_stop'})
-    elif xbmcgui.Dialog().yesno('Start AirPlay mirroring?', 'Stop current playback and receive your Apple device on this TV? Use the same local network. Protected video and AirPlay 2 multi-room are not supported.'):
-        api('/api/tv/control',{'action':'airplay_start'})
+    choice=xbmcgui.Dialog().select('AirPlay · '+('Connected' if state.get('active') else 'Ready for connections'),['Keep discoverable','End current connection','Disable receiver'])
+    if choice>=0:api('/api/tv/control',{'action':['airplay_start','airplay_stop','airplay_disable'][choice]})
