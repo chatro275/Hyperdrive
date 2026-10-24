@@ -245,4 +245,15 @@ class FrameTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError):self.request('/api/voice/storage/confirm',{'token':pending['token']})
         self.assertTrue((server.MEDIA/'Example.2024.mp4').exists())
 
+
+    def test_airplay_commands_and_receiver_status(self):
+        state={'installed':True,'running':True,'pin':'1234','name':'Hyperdrive'}
+        self.request('/api/tv/poll',{'airplay':state}).close()
+        self.assertEqual(json.load(self.request('/api/status'))['tv']['airplay'],state)
+        self.request('/api/tv/control',{'action':'airplay_start'}).close()
+        self.request('/api/voice/settings',{'enabled':True}).close()
+        self.request('/api/voice/command',{'text':'stop air play'}).close()
+        commands=json.load(self.request('/api/tv/poll',{}))['commands']
+        self.assertEqual([c['action'] for c in commands],['airplay_start','airplay_stop'])
+
 if __name__=='__main__':unittest.main()

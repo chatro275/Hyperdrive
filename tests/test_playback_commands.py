@@ -8,7 +8,8 @@ class PlaybackTests(unittest.TestCase):
         definition=next(n for n in source.body if isinstance(n,ast.ClassDef) and n.name=='Playback')
         self.kodi=types.SimpleNamespace(Player=object,executebuiltin=Mock())
         self.route=Mock();self.api=Mock();self.rpc=Mock(return_value=[{'type':'video','playerid':1}])
-        scope={'xbmc':self.kodi,'restore_movie_route':self.route,'api':self.api,'rpc':self.rpc}
+        self.receiver=Mock()
+        scope={'receiver':self.receiver,'xbmc':self.kodi,'restore_movie_route':self.route,'api':self.api,'rpc':self.rpc}
         exec(compile(ast.Module(body=[definition],type_ignores=[]),'service.py','exec'),scope)
         self.player=scope['Playback']();self.player.stop=Mock();self.player.seekTime=Mock()
         self.player.getPlayingFile=Mock(return_value='/movie.mp4');self.player.getTotalTime=Mock(return_value=100)
@@ -28,3 +29,16 @@ class PlaybackTests(unittest.TestCase):
     def test_subtitles_use_active_video(self):
         self.player.command({'action':'subtitles_on'})
         self.rpc.assert_called_with('Player.SetSubtitle',playerid=1,subtitle='on')
+
+    def test_airplay_start_preserves_movie_progress(self):
+        self.player.tracking=True;self.player.progress=.5
+        self.player.command({'action':'airplay_start'})
+        self.receiver.start.assert_called_once();self.player.stop.assert_called_once()
+        self.api.assert_called_once_with('/api/movies/3',{'progress':.5})
+    def test_failed_airplay_start_keeps_movie_playing(self):
+        self.receiver.start.side_effect=ValueError('Not installed')
+        with self.assertRaises(ValueError):self.player.command({'action':'airplay_start'})
+        self.player.stop.assert_not_called()
+    def test_return_home_stops_receiver(self):
+        self.player.command({'action':'hyperdrive'})
+        self.receiver.stop.assert_called_once()

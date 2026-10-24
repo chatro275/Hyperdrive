@@ -32,7 +32,20 @@ if [[ "${1:-}" == "--remote-access" ]]; then
   tailscale ip -4
   exit 0
 fi
-if [[ $# -gt 0 ]]; then echo 'Usage: bash scripts/install-pi.sh [--remote-access]' >&2; exit 1; fi
+if [[ "${1:-}" == "--airplay" ]]; then
+  sudo apt-get update
+  sudo apt-get install -y uxplay avahi-daemon gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-x gstreamer1.0-pulseaudio
+  sudo systemctl enable --now avahi-daemon
+  airplay_help="$(uxplay -h 2>&1 || true)"
+  if [[ "$airplay_help" != *'-pin'* ]]; then
+    echo 'This OS supplied an older UxPlay. Version 1.67+ is required; update your Pi OS packages. The receiver has not been started.' >&2
+    exit 1
+  fi
+  printf '\nAirPlay receiver installed. In Hyperdrive choose AirPlay mirroring, or use Settings > AirPlay in the portal.\n'
+  printf 'Kodi must run in the logged-in Pi desktop. Start Screen Mirroring on your Apple device and select Hyperdrive.\n'
+  exit 0
+fi
+if [[ $# -gt 0 ]]; then echo 'Usage: bash scripts/install-pi.sh [--remote-access|--airplay]' >&2; exit 1; fi
 sudo apt-get update
 sudo apt-get install -y python3 kodi pulseaudio-utils
 python3 -m unittest discover -s tests -v

@@ -53,7 +53,7 @@ def parse_command(text, movies):
         'close movie':'end_movie','finish watching':'end_movie',
         'check for updates':'check_updates','check for software updates':'check_updates',
         'update software':'updates','update hyperdrive':'updates','software update':'updates',
-        'install update':'updates','fix sound':'audio_setup','fix movie audio':'audio_setup',
+        'start air play':'airplay_start','open air play':'airplay_start','stop air play':'airplay_stop','close air play':'airplay_stop','start airplay':'airplay_start','open airplay':'airplay_start','stop airplay':'airplay_stop','close airplay':'airplay_stop','install update':'updates','fix sound':'audio_setup','fix movie audio':'audio_setup',
         'test movie audio':'audio_diagnose','check movie audio':'audio_diagnose',
         'pause the movie':'pause_only','resume the movie':'resume','keep playing':'resume',
         'turn subtitles on':'subtitles_on','turn subtitles off':'subtitles_off'})

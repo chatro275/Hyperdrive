@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<addon id="script.frame" name="Frame Cinema" version="2.9.0" provider-name="Frame">
+<addon id="script.frame" name="Frame Cinema" version="2.10.0" provider-name="Frame">
   <requires><import addon="xbmc.python" version="3.0.0"/></requires>
   <extension point="xbmc.python.script" library="default.py"><provides>executable</provides></extension>
   <extension point="xbmc.service" library="service.py"/>

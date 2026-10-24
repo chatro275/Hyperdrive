@@ -1,10 +1,10 @@
 import sys
 import xbmc, xbmcaddon, xbmcgui
 from common import api
-from controls import audio_menu, power_menu, update_menu, hdmi_setup, test_sound, voice_results
+from controls import audio_menu, power_menu, update_menu, hdmi_setup, test_sound, voice_results, airplay_menu
 
 def menu(action):
-    try: {'audio':audio_menu, 'power_menu':power_menu, 'updates':update_menu, 'audio_setup':hdmi_setup, 'audio_test':test_sound, 'voice_results':voice_results}[action]()
+    try: {'audio':audio_menu, 'power_menu':power_menu, 'updates':update_menu, 'audio_setup':hdmi_setup, 'audio_test':test_sound, 'voice_results':voice_results, 'airplay':airplay_menu}[action]()
     except Exception as exc: xbmcgui.Dialog().ok('Frame', str(exc))
 
 class Cinema(xbmcgui.WindowXML):
@@ -65,7 +65,7 @@ class Cinema(xbmcgui.WindowXML):
             except Exception: xbmcgui.Dialog().notification('Frame', 'Could not save watchlist')
 
 home = xbmcgui.Window(10000)
-if len(sys.argv) > 1 and sys.argv[1] in ('audio', 'updates', 'power_menu', 'audio_setup', 'audio_test', 'voice_results'):
+if len(sys.argv) > 1 and sys.argv[1] in ('audio', 'updates', 'power_menu', 'audio_setup', 'audio_test', 'voice_results', 'airplay'):
     menu(sys.argv[1])
 elif home.getProperty('frame.open') != 'true':
     home.setProperty('frame.open', 'true')

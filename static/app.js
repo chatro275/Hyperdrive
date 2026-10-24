@@ -101,7 +101,7 @@ for(const choice of ['confirm','cancel'])$('#voice-file-'+choice).onclick=async(
 
 $('#mic-secondary').onchange=()=>{micDirty=true;$('#mic-save-status').textContent='Unsaved microphone selection';};
 const settingsNav=document.createElement('nav');settingsNav.className='settings-nav';settingsNav.setAttribute('aria-label','Settings sections');
-const settingsGroups=['Library','Sound & power','Hey Hyper','Updates','Remote access','System'];
+const settingsGroups=['Library','Sound & power','Hey Hyper','AirPlay','Updates','Remote access','System'];
 document.querySelector('.voice-panel').dataset.settings='Hey Hyper';document.querySelector('.device-settings').dataset.settings='Sound & power';
 $('#management').insertBefore(settingsNav,$('#management').children[1]);
 let activeSettings='Library';
@@ -116,3 +116,6 @@ window.addEventListener('hashchange',openSettingsHash);openSettingsHash();
 let remoteAddress='';
 $('#remote-check').onclick=async()=>{const button=$('#remote-check');button.disabled=true;$('#remote-status').textContent='Checking…';$('#remote-url').hidden=true;$('#remote-copy').hidden=true;try{const state=await api('/api/remote');$('#remote-status').textContent=state.message;if(state.ready){remoteAddress=state.url;$('#remote-url').href=state.url;$('#remote-url').textContent=state.url;$('#remote-url').hidden=false;$('#remote-copy').hidden=false;}}catch(e){$('#remote-status').textContent=e.message;}finally{button.disabled=false;}};
 $('#remote-copy').onclick=async()=>{try{await navigator.clipboard.writeText(remoteAddress);toast('Address copied');}catch(e){toast('Select and copy the address shown above.');}};
+
+async function airplayStatus(){try{const state=await api('/api/status');const tv=state.tv||{};const receiver=tv.airplay||{};$('#airplay-status').textContent=!tv.online?'TV service offline. Start Kodi on your Pi.':receiver.error||tv.error||(!receiver.installed?'Receiver not installed. Open installation instructions below.':receiver.running?'Receiver running · choose Hyperdrive on your Apple device.':'Ready to start.');$('#airplay-code').textContent=tv.online&&receiver.running?'Pairing code: '+receiver.pin:'';}catch(e){$('#airplay-status').textContent='Receiver status unavailable';}}
+airplayStatus();setInterval(airplayStatus,4000);

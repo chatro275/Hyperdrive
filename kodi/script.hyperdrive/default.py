@@ -18,6 +18,7 @@ class Hyperdrive(xbmcgui.WindowXML):
                 info='{:.1f} GB free of {:.1f} GB'.format(state['free']/1024**3,state['total']/1024**3)
                 xbmcgui.Dialog().ok('Your files',info+'\nUpload or download any file type at http://raspberrypi.local:8080 on your phone or computer.')
             except Exception:xbmcgui.Dialog().ok('Storage unavailable','Check the USB drive and Hyperdrive portal. Open http://raspberrypi.local:8080 on your phone or computer.')
+        elif control==14:xbmc.executebuiltin('RunScript(script.frame,airplay)')
         elif control==12:xbmc.executebuiltin('RunScript(script.frame,updates)')
         elif control==13:xbmc.executebuiltin('RunScript(script.frame,power_menu)')
     def onAction(self, action):

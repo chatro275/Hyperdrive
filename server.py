@@ -487,6 +487,7 @@ class Handler(BaseHTTPRequestHandler):
                     TV.update(seen=time.monotonic(), playing=bool(data.get('playing')), title=str(data.get('title',''))[:200], error=str(data.get('error',''))[:300])
                     TV['audio'] = data.get('audio', {})
                     TV['power'] = data.get('power', {})
+                    TV['airplay'] = data.get('airplay', {})
                     pending = [c for c in COMMANDS if c['expires'] > time.monotonic()]
                     COMMANDS.clear()
                 if data.get('error'):HEALTH.event('Kodi',str(data['error']))
@@ -502,7 +503,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json({'ok': True})
             if route == '/api/tv/control':
                 action = data.get('action')
-                if action not in {'hyperdrive', 'pause', 'stop', 'left', 'right', 'up', 'down', 'select', 'back', 'home', 'volume', 'mute', 'audio_track', 'audio_diagnose','end_movie','audio_settings', 'audio_setup', 'audio_test', 'airplay_settings', 'updates', 'power_menu', 'reboot', 'shutdown'}:
+                if action not in {'airplay_start','airplay_stop','hyperdrive', 'pause', 'stop', 'left', 'right', 'up', 'down', 'select', 'back', 'home', 'volume', 'mute', 'audio_track', 'audio_diagnose','end_movie','audio_settings', 'audio_setup', 'audio_test', 'airplay_settings', 'updates', 'power_menu', 'reboot', 'shutdown'}:
                     raise ValueError('Unknown TV action')
                 command = {'action':action}
                 if action in {'volume', 'audio_track'}:

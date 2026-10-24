@@ -102,3 +102,49 @@ class AudioControlsTests(unittest.TestCase):
         self.module.update_menu()
         self.assertEqual(self.module.api.call_count,4)
         self.assertEqual(self.dialog.yesno.call_count,2)
+
+
+class AirPlayTests(unittest.TestCase):
+    setUp=AudioControlsTests.setUp
+    def prepare(self):
+        self.values['services.airplay']=True
+        self.module.audio_profile.return_value.read_text.return_value='{"sink":"alsa_output.hdmi"}'
+        process=Mock();process.poll.return_value=None
+        return process
+    def test_start_pairing_and_selected_audio_then_restore(self):
+        import os
+        process=self.prepare();receiver=self.module.AirPlayReceiver()
+        with patch('shutil.which',return_value='/usr/bin/uxplay'),patch.dict(os.environ,{'DISPLAY':':0'},clear=True),patch.object(self.module.subprocess,'run',return_value=types.SimpleNamespace(stdout='-pin -fs',stderr='')),patch.object(self.module.subprocess,'Popen',return_value=process) as spawn:
+            result=receiver.start();receiver.start()
+        self.assertTrue(result['running']);self.assertEqual(len(result['pin']),4)
+        args=spawn.call_args.args[0];self.assertIn('pulsesink device=alsa_output.hdmi',args);self.assertIn('-pin',args)
+        self.assertFalse(self.values['services.airplay']);spawn.assert_called_once()
+        receiver.stop();process.terminate.assert_called_once();self.assertTrue(self.values['services.airplay']);self.assertEqual(receiver.pin,'')
+    def test_missing_dependency_and_headless_are_clear_errors(self):
+        import os
+        receiver=self.module.AirPlayReceiver()
+        with patch('shutil.which',return_value=None):
+            with self.assertRaisesRegex(ValueError,'--airplay'):receiver.start()
+        with patch('shutil.which',return_value='/usr/bin/uxplay'),patch.dict(os.environ,{},clear=True):
+            with self.assertRaisesRegex(ValueError,'desktop session'):receiver.start()
+    def test_old_receiver_rejected_without_disabling_kodi(self):
+        import os
+        self.prepare();receiver=self.module.AirPlayReceiver()
+        with patch('shutil.which',return_value='/usr/bin/uxplay'),patch.dict(os.environ,{'DISPLAY':':0'},clear=True),patch.object(self.module.subprocess,'run',return_value=types.SimpleNamespace(stdout='old',stderr='')):
+            with self.assertRaisesRegex(ValueError,'1.67'):receiver.start()
+        self.assertTrue(self.values['services.airplay'])
+    def test_launch_failure_restores_kodi(self):
+        import os
+        self.prepare();receiver=self.module.AirPlayReceiver()
+        with patch('shutil.which',return_value='/usr/bin/uxplay'),patch.dict(os.environ,{'DISPLAY':':0'},clear=True),patch.object(self.module.subprocess,'run',return_value=types.SimpleNamespace(stdout='-pin',stderr='')),patch.object(self.module.subprocess,'Popen',side_effect=OSError('launch failed')):
+            with self.assertRaises(OSError):receiver.start()
+        self.assertTrue(self.values['services.airplay']);self.assertIsNone(receiver.process);self.assertEqual(receiver.pin,'')
+    def test_exited_receiver_reports_error_and_restores(self):
+        receiver=self.module.AirPlayReceiver();receiver.process=Mock();receiver.process.poll.return_value=1;receiver.process.returncode=1
+        receiver.previous_airplay=True;receiver.pin='1234'
+        with patch('shutil.which',return_value='/usr/bin/uxplay'):result=receiver.status()
+        self.assertFalse(result['running']);self.assertIn('exited',result['error']);self.assertEqual(result['pin'],'');self.assertTrue(self.values['services.airplay'])
+    def test_unresponsive_owned_process_is_killed(self):
+        receiver=self.module.AirPlayReceiver();process=Mock();process.poll.return_value=None
+        process.wait.side_effect=[self.module.subprocess.TimeoutExpired('uxplay',3),0];receiver.process=process
+        receiver.stop();process.kill.assert_called_once();self.assertIsNone(receiver.process)

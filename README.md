@@ -285,3 +285,22 @@ The optional installer downloads the official Tailscale Linux installer, enables
 The Pi, USB and both devices need internet/network connectivity; uploads depend on both connections and are not resumable after interruption. Test from a phone with Wi-Fi disabled and Tailscale connected: upload a small file, download it and compare it. Local status checks cannot prove worldwide reachability. A firewall or custom Tailscale access policy may need to allow TCP 8080. Only trust devices/users that should manage the whole portal: there is no separate application login. Keep port 8080 off the public internet. Tailscale authentication happens in its own app/browser, never in Hyperdrive. `sudo tailscale down` disconnects remote access while local access remains. Reauthentication may be needed if device keys expire.
 
 Official installation and connection instructions: https://tailscale.com/docs/install/linux and https://tailscale.com/docs/how-to/connect-to-devices. No changes have been made to a live Pi by publishing this release; installation and sign-in on the Pi are required.
+
+## AirPlay mirroring (2.10)
+
+Hyperdrive integrates the optional open-source UxPlay receiver alongside Kodi. It supports Apple screen mirroring with audio, compatible audio-only reception, and Mac extended-display mode where offered by macOS. This is not full Apple TV compatibility: DRM-protected video and AirPlay 2 multi-room audio are not supported. Direct in-app video casting depends on the installed UxPlay version and app; use Screen Mirroring as the primary route. See https://github.com/FDH2/UxPlay.
+
+After installing this Hyperdrive update, run on the Pi:
+
+```sh
+cd ~/HyperMedia
+bash scripts/install-pi.sh --airplay
+```
+
+This installs UxPlay, Avahi and GStreamer packages. UxPlay 1.67+ is required for pairing-code support; older OS packages are rejected with upgrade guidance. No source builds, OS upgrades or receiver startup are performed automatically. Kodi must run inside a logged-in Raspberry Pi desktop with X11 or Wayland and desktop PulseAudio/PipeWire audio. This integration does not target Pi OS Lite/KMS-only Kodi.
+
+Choose AirPlay mirroring on the Hyperdrive TV home screen, Settings → AirPlay in the web portal, or say “Hey Hyper, start AirPlay”. Movie playback stops with resume progress saved. On your iPhone/iPad/Mac select Control Centre → Screen Mirroring → Hyperdrive. The current pairing code appears in a TV notification and the web panel. Previously trusted clients may not be prompted again. Both devices must be on the same local network with multicast discovery allowed; Tailscale alone does not relay that discovery.
+
+The receiver targets 1280×720 and uses a fullscreen desktop window; actual focus/fullscreen behaviour depends on your compositor. Kodi remains open underneath. Stop AirPlay in the web portal, say “Hey Hyper, stop AirPlay”, or return to Movies/Home to stop the owned receiver process. Normal Kodi shutdown also stops it. TV remote control of the external receiver window is not implemented; the web or Apple device is the reliable control path. Stopping Screen Mirroring on the Apple device alone leaves the receiver available until you stop it in Hyperdrive.
+
+Kodi’s built-in AirPlay receiver is temporarily disabled during a UxPlay session and restored when it stops. UxPlay uses the HDMI desktop sink saved by Fix HDMI sound if present; otherwise it uses the desktop default. If silent, choose the TV output in the Pi desktop audio settings and check its volume. Kodi-specific volume controls do not control UxPlay. A stopped/crashed receiver is reported, not silently restarted. Tests mock the receiver and validate command routing, pairing arguments, cleanup and setting restoration; Apple-device discovery, actual audio/video and TV focus require testing on your Pi.

@@ -1,7 +1,7 @@
 import json, time
 import xbmc, xbmcgui
 from common import api
-from controls import rpc, audio_status, power_status, set_track, execute_power, restore_movie_route, diagnose_movie_audio
+from controls import rpc, audio_status, power_status, set_track, execute_power, restore_movie_route, diagnose_movie_audio, AirPlayReceiver
 
 class Playback(xbmc.Player):
     movie = None
@@ -39,7 +39,13 @@ class Playback(xbmc.Player):
 
     def command(self, command):
         action = command['action']
-        if action == 'play':
+        if action == 'airplay_start':
+            receiver.start()
+            self.save();self.stop()
+        elif action == 'airplay_stop':
+            receiver.stop();xbmc.executebuiltin('RunScript(script.hyperdrive)')
+        elif action == 'play':
+            receiver.stop()
             self.save()
             self.movie = command
             self.tracking = False
@@ -69,6 +75,7 @@ class Playback(xbmc.Player):
             rpc('Player.SetSubtitle',playerid=video['playerid'],subtitle='on' if action=='subtitles_on' else 'off')
         elif action == 'audio_diagnose':diagnose_movie_audio()
         elif action == 'end_movie':
+            receiver.stop()
             self.save();self.stop();xbmc.executebuiltin('RunScript(script.hyperdrive)')
         elif action == 'stop': self.stop()
         elif action == 'volume':
@@ -85,14 +92,17 @@ class Playback(xbmc.Player):
             self.save()
             execute_power(action)
         elif action == 'hyperdrive':
+            receiver.stop()
             xbmc.executebuiltin('RunScript(script.hyperdrive)')
         elif action == 'home':
+            receiver.stop()
             window = xbmcgui.Window(10000).getProperty('frame.window')
             if window.isdigit(): xbmc.executebuiltin('ActivateWindow({})'.format(window))
             else: xbmc.executebuiltin('RunScript(script.frame)')
         elif action in ('left','right','up','down','select','back'):
             xbmc.executeJSONRPC(json.dumps({'jsonrpc':'2.0','id':1,'method':'Input.' + action.capitalize()}))
 
+receiver = AirPlayReceiver()
 monitor = xbmc.Monitor()
 player = Playback()
 opened = False
@@ -112,7 +122,7 @@ while not monitor.abortRequested():
         if player.isPlayingAudio():
             try: title = player.getMusicInfoTag().getTitle() or 'Audio playback'
             except Exception: title = 'Audio playback'
-        result = api('/api/tv/poll', {'playing':player.isPlaying(), 'title':title, 'error':player.error, 'audio':audio, 'power':power})
+        result = api('/api/tv/poll', {'playing':player.isPlaying(), 'title':title, 'error':player.error, 'audio':audio, 'power':power, 'airplay':receiver.status()})
         if not opened:
             if not xbmc.getCondVisibility('System.HasAddon(script.hyperdrive)'):
                 xbmc.executebuiltin('RunScript(script.frame)')
@@ -128,3 +138,4 @@ while not monitor.abortRequested():
         xbmc.log('Frame service: ' + str(exc), xbmc.LOGWARNING)
     if monitor.waitForAbort(1): break
 player.save()
+receiver.stop()

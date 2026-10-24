@@ -231,3 +231,69 @@ def diagnose_movie_audio():
     message='Output: '+str(state.get('output','unknown'))+'\n'+'\n'.join(issues or ['Kodi reports an active audio track and nonzero, unmuted volume. This does not prove sound reaches the TV.'])
     xbmcgui.Dialog().textviewer('Movie audio diagnosis',message)
     return issues
+
+class AirPlayReceiver:
+    """Own one UxPlay receiver in Kodi's logged-in desktop session."""
+    def __init__(self):
+        self.process=None;self.pin='';self.error='';self.previous_airplay=None
+    def status(self):
+        import shutil
+        if self.process is not None and self.process.poll() is not None:
+            code=self.process.returncode
+            self.process=None;self.pin=''
+            self.error='AirPlay receiver exited (code {}). Check the Pi desktop, Avahi and GStreamer packages.'.format(code)
+            self.restore_kodi()
+        return {'installed':bool(shutil.which('uxplay')),'running':self.process is not None,'name':'Hyperdrive','pin':self.pin,'error':self.error}
+    def restore_kodi(self):
+        if self.previous_airplay is not None:
+            old=self.previous_airplay
+            try:set_setting('services.airplay',old)
+            except Exception as exc:self.error='Could not restore Kodi AirPlay: '+str(exc)
+            else:self.previous_airplay=None
+    def start(self):
+        import os, shutil, secrets, re
+        if self.status()['running']:return self.status()
+        executable=shutil.which('uxplay')
+        if not executable:raise ValueError('Install the receiver on the Pi: bash scripts/install-pi.sh --airplay')
+        if not (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
+            raise ValueError('AirPlay mirroring needs Kodi running in a Raspberry Pi desktop session. Pi OS Lite is not supported by this integration.')
+        help_result=subprocess.run([executable,'-h'],capture_output=True,text=True,timeout=5)
+        help_text=help_result.stdout+help_result.stderr
+        if '-pin' not in help_text:raise ValueError('UxPlay 1.67 or newer is required for pairing codes. Update the Pi OS package before starting AirPlay.')
+        self.pin=str(1000+secrets.randbelow(9000));self.error=''
+        sink='pulsesink'
+        try:
+            saved=json.loads(audio_profile().read_text()).get('sink','')
+            if saved and re.fullmatch(r'[A-Za-z0-9_.:-]+',saved):sink+=' device='+saved
+        except (OSError,ValueError):pass
+        video='waylandsink' if os.environ.get('WAYLAND_DISPLAY') else 'ximagesink'
+        args=[executable,'-n','Hyperdrive','-fs','-s','1280x720','-pin',self.pin,'-vs',video,'-as',sink]
+        try:
+            # Avoid advertising two incompatible AirPlay receivers at once.
+            old=rpc('Settings.GetSettingValue',setting='services.airplay')['value']
+            if old:
+                self.previous_airplay=old;set_setting('services.airplay',False)
+            self.process=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        except Exception:
+            self.pin='';self.restore_kodi();raise
+        state=self.status()
+        if not state['running']:raise ValueError(state['error'])
+        xbmcgui.Dialog().notification('AirPlay · Hyperdrive','Screen Mirroring → Hyperdrive. Pairing code: '+self.pin,time=15000)
+        return self.status()
+    def stop(self):
+        if self.process is not None:
+            process=self.process
+            if process.poll() is None:
+                process.terminate()
+                try:process.wait(timeout=3)
+                except subprocess.TimeoutExpired:process.kill();process.wait(timeout=3)
+            self.process=None
+        self.pin='';self.restore_kodi()
+
+def airplay_menu():
+    state=api('/api/status').get('tv',{}).get('airplay',{})
+    if state.get('running'):
+        if xbmcgui.Dialog().yesno('AirPlay · Hyperdrive','Receiver is running. Pairing code: '+state.get('pin','')+'\nStop AirPlay and return to Hyperdrive?'):
+            api('/api/tv/control',{'action':'airplay_stop'})
+    elif xbmcgui.Dialog().yesno('Start AirPlay mirroring?', 'Stop current playback and receive your Apple device on this TV? Use the same local network. Protected video and AirPlay 2 multi-room are not supported.'):
+        api('/api/tv/control',{'action':'airplay_start'})
