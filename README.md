@@ -318,3 +318,9 @@ sudo reboot
 This installs Bluetooth/PipeWire modules and configures RAOP discovery for the existing PipeWire desktop. It does not replace a PulseAudio setup. RAOP/AirPlay speaker compatibility varies; password-protected speakers may need manual configuration, and AirPlay 2 multi-room is not supported. See https://docs.pipewire.org/page_module_raop_discover.html.
 
 Automated checks cover routing, pairing/disconnect events, stream bytes and capture cleanup. They cannot establish audible sound, Apple interoperability or TV focus without the physical Pi and devices.
+
+## AirPlay disconnect recovery (2.11.1)
+
+Recognise UxPlay's video-socket-closed message and recover from explicit session endings even when the connected event was missed. Return to Hyperdrive if an active receiver exits, and keep discovery available after disconnects. Ordinary discovery probes do not interrupt Kodi. Receiver output is decoded with replacement for invalid UTF-8 so a malformed log line cannot stop lifecycle monitoring. These changes target freezing after disconnect, not decoder stalls during playback. Hardware verification is still required.
+
+Kodi API errors now include the server-provided reason rather than only the HTTP status.

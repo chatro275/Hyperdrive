@@ -300,7 +300,10 @@ class AirPlayReceiver:
         match=re.search(r'CLIENT MUST NOW ENTER PIN\s*=\s*"(\d{4})"',line)
         if match:return ('pin',match.group(1))
         if 'raop_rtp_mirror starting mirroring' in line or 'raop_rtp starting audio' in line:return ('connected','')
-        if 'TEARDOWN request' in line or 'Open connections: 0' in line or 'lost connection with client' in line:return ('disconnected','')
+        # Explicit session endings must work even if the start event was missed.
+        if 'TEARDOWN request' in line or 'lost connection with client' in line:return ('ended','')
+        if 'raop_rtp_mirror tcp socket was closed by client' in line:return ('ended','')
+        if 'Open connections: 0' in line:return ('disconnected','')
         return None
     def read_events(self,process,events):
         try:
@@ -317,7 +320,9 @@ class AirPlayReceiver:
         import shutil,time
         if self.process is not None and self.process.poll() is not None:
             code=self.process.returncode
+            was_active=self.active
             self.stop();self.error='AirPlay receiver exited (code {}). Check desktop audio and receiver packages.'.format(code)
+            if was_active:xbmc.executebuiltin('RunScript(script.hyperdrive)')
             self.retry_at=time.monotonic()+30
         if time.monotonic()>self.pin_until:self.pin=''
         return {'installed':bool(shutil.which('uxplay')),'running':self.process is not None,'active':self.active,'enabled':self.enabled,'name':'Hyperdrive','pin':self.pin,'error':self.error}
@@ -349,7 +354,7 @@ class AirPlayReceiver:
         try:
             old=rpc('Settings.GetSettingValue',setting='services.airplay')['value']
             if old:self.previous_airplay=old;set_setting('services.airplay',False)
-            self.process=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
+            self.process=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding='utf-8',errors='replace',bufsize=1)
             self.events=queue.Queue(maxsize=64)
             threading.Thread(target=self.read_events,args=(self.process,self.events),daemon=True).start()
         except Exception:self.pin='';self.restore_kodi();raise
@@ -369,7 +374,7 @@ class AirPlayReceiver:
                 self.active=True;self.pin=''
                 try:apply_saved_desktop_route()
                 except Exception as exc:self.error=str(exc)
-            elif kind=='disconnected' and self.active:
+            elif kind=='ended' or (kind=='disconnected' and self.active):
                 self.stop();self.retry_at=0
                 xbmc.executebuiltin('RunScript(script.hyperdrive)')
                 break

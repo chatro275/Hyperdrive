@@ -183,3 +183,24 @@ class AirPlayTests(unittest.TestCase):
         self.module.configure_screensaver(5)
         self.assertEqual(self.values['screensaver.time'],5)
         self.assertEqual(self.values['screensaver.mode'],'screensaver.xbmc.builtin.dim')
+    def test_explicit_end_recovers_without_connected_event(self):
+        for line in ('TEARDOWN request,  96=1, 110=1',
+                     'raop_rtp_mirror tcp socket was closed by client (recv returned 0)',
+                     '*** ERROR lost connection with client (network problem?)'):
+            receiver=self.module.AirPlayReceiver();receiver.process=self.prepare()
+            receiver.events.put(receiver.parse_event(line))
+            with patch('shutil.which',return_value='/usr/bin/uxplay'),patch.object(receiver,'start') as start:
+                receiver.tick(Mock());start.assert_called_once()
+            self.assertIsNone(receiver.process)
+            self.module.xbmc.executebuiltin.assert_called_with('RunScript(script.hyperdrive)')
+    def test_idle_discovery_disconnect_does_not_interrupt_kodi(self):
+        receiver=self.module.AirPlayReceiver();receiver.process=self.prepare()
+        receiver.events.put(('disconnected',''))
+        receiver.tick(Mock())
+        receiver.process.terminate.assert_not_called()
+        self.module.xbmc.executebuiltin.assert_not_called()
+    def test_active_receiver_crash_returns_home(self):
+        receiver=self.module.AirPlayReceiver();receiver.process=self.prepare()
+        receiver.process.poll.return_value=1;receiver.process.returncode=1;receiver.active=True
+        receiver.status()
+        self.module.xbmc.executebuiltin.assert_called_with('RunScript(script.hyperdrive)')
