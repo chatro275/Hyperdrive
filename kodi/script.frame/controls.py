@@ -45,7 +45,7 @@ def set_track(index):
 def audio_menu():
     state = audio_status()
     choice = xbmcgui.Dialog().select('Audio · Volume {}%{}'.format(state['volume'], ' · Muted' if state['muted'] else ''),
-        ['Volume up', 'Volume down', 'Unmute' if state['muted'] else 'Mute', 'Movie audio track', 'HDMI / speaker output settings', 'AirPlay receiver settings', 'Configure HDMI for TV speakers', 'Test left / right sound'])
+        ['Volume up', 'Volume down', 'Unmute' if state['muted'] else 'Mute', 'Movie audio track', 'HDMI / speaker output settings', 'AirPlay receiver settings', 'Configure HDMI for TV speakers', 'Test left / right sound', 'Hyperconnect → Robi'])
     if choice in (0, 1) and state.get('passthrough'):
         return xbmcgui.Dialog().ok('Passthrough audio', 'Adjust volume on your TV or receiver while passthrough is enabled.')
     if choice == 0: rpc('Application.SetVolume', volume=min(100,state['volume']+5))
@@ -60,6 +60,7 @@ def audio_menu():
     elif choice == 5: xbmc.executebuiltin('ActivateWindow(servicesettings)')
     elif choice == 6: hdmi_setup()
     elif choice == 7: test_sound()
+    elif choice == 8: hyperconnect_menu()
 
 def track_label(track):
     return '{} · {} · {} channels'.format(track.get('name') or track.get('language') or 'Track '+str(track['index']+1), track.get('codec',''), track.get('channels','?'))
@@ -152,7 +153,7 @@ def hdmi_setup():
     except Exception:
         for key in reversed(changed):set_setting(key,old[key])
         raise
-    save_audio_profile(sink=devices[choice].get('sink',{}).get('name',''))
+    save_audio_profile(sink=devices[choice].get('sink',{}).get('name',''),hyperconnect_identity='')
     if xbmcgui.Dialog().yesno('HDMI configured', 'Run the left and right sound test now? Stop any current movie first. If sound is still missing, check the TV mute/volume and selected HDMI port.'):
         test_sound()
 
@@ -209,12 +210,9 @@ def audio_profile():
 
 def restore_movie_route():
     # Desktop streams are recreated for each movie; keep the explicitly chosen sink.
-    try: saved=json.loads(audio_profile().read_text())
-    except (OSError,ValueError):return
-    name=saved.get('sink')
-    if not name:return
-    sinks=desktop_sinks()
-    if not any(s.get('name')==name for s in sinks):raise ValueError('Saved HDMI output is missing. Run Fix HDMI sound again.')
+    sink=saved_output_sink()
+    if not sink:return
+    name=sink['name']
     for stream in json.loads(pactl('--format=json','list','sink-inputs')):
         props=stream.get('properties',{})
         if 'kodi' in (props.get('application.name','')+' '+props.get('application.process.binary','')).lower():
@@ -242,20 +240,56 @@ def save_audio_profile(**values):
     state=load_audio_profile();state.update(values);path=audio_profile();temp=path.with_suffix('.tmp')
     temp.write_text(json.dumps(state));temp.replace(path)
 
+def airplay_sink(sink):
+    props=sink.get('properties',{})
+    return bool(sink.get('name','').lower().startswith('raop') or props.get('raop.ip') or props.get('sess.media')=='raop')
+
+def receiver_identity(sink):
+    props=sink.get('properties',{})
+    # PipeWire exposes the advertised service name as the sink description.
+    return str(props.get('raop.name') or props.get('node.description') or sink.get('description') or '')
+
+def hyperconnect_sink(sink):
+    return airplay_sink(sink) and 'robi' in receiver_identity(sink).split('@',1)[-1].casefold()
+
 def output_devices():
     devices=[]
     for sink in desktop_sinks():
         name=sink.get('name','');props=sink.get('properties',{})
         if props.get('device.class')=='monitor':continue
-        kind='Bluetooth' if 'bluez' in name else 'AirPlay / Wi-Fi' if 'raop' in name.lower() or props.get('raop.ip') else 'HDMI' if 'hdmi' in name.lower() else 'Speaker / system'
-        devices.append({'name':name,'label':sink.get('description',name),'kind':kind})
+        if airplay_sink(sink) and not hyperconnect_sink(sink):continue
+        kind='Hyperconnect' if hyperconnect_sink(sink) else 'Bluetooth' if 'bluez' in name else 'HDMI' if 'hdmi' in name.lower() else 'Speaker / system'
+        label=receiver_identity(sink).split('@',1)[-1] if kind=='Hyperconnect' else sink.get('description',name)
+        devices.append({'name':name,'label':label,'kind':kind})
     return devices
 
+def saved_output_sink():
+    saved=load_audio_profile();name=saved.get('sink','')
+    if not name:return None
+    sinks=desktop_sinks();identity=saved.get('hyperconnect_identity')
+    if identity:
+        matches=[s for s in sinks if hyperconnect_sink(s) and receiver_identity(s)==identity]
+        if len(matches)!=1:raise ValueError('Saved Hyperconnect speaker is unavailable or ambiguous. Select a speaker in Sound & power.')
+        sink=matches[0]
+        if sink['name']!=name:save_audio_profile(sink=sink['name'])
+        return sink
+    sink=next((s for s in sinks if s.get('name')==name),None)
+    if not sink:raise ValueError('Saved speaker is disconnected. Reconnect it or choose another output in Sound & power.')
+    if airplay_sink(sink) and not hyperconnect_sink(sink):raise ValueError('Hyperconnect only supports speaker names containing robi. Choose another output.')
+    return sink
+
+def hyperconnect_menu():
+    devices=[d for d in output_devices() if d['kind']=='Hyperconnect']
+    if not devices:return xbmcgui.Dialog().ok('Hyperconnect', 'No Robi speakers found. Turn Robi on, use the same LAN and enable wireless audio on the Hyperdrive Pi. See Sound & power in the dashboard.')
+    choice=xbmcgui.Dialog().select('Hyperconnect', [d['label'] for d in devices])
+    if choice>=0:
+        select_output(devices[choice]['name'])
+        xbmcgui.Dialog().notification('Hyperconnect', 'Output selected: '+devices[choice]['label'])
+
 def apply_saved_desktop_route():
-    name=load_audio_profile().get('sink','')
-    if not name:return
-    sink=next((s for s in desktop_sinks() if s.get('name')==name),None)
-    if not sink:raise ValueError('Selected speaker is disconnected. Reconnect it or select another output.')
+    sink=saved_output_sink()
+    if not sink:return
+    name=sink['name']
     streams=json.loads(pactl('--format=json','list','sink-inputs'))
     for stream in streams:
         props=stream.get('properties',{});app=(props.get('application.name','')+' '+props.get('application.process.binary','')).lower()
@@ -264,16 +298,19 @@ def apply_saved_desktop_route():
 def select_output(name):
     sink=next((s for s in desktop_sinks() if s.get('name')==name),None)
     if not sink:raise ValueError('Output is not connected. Refresh devices first.')
+    if airplay_sink(sink) and not hyperconnect_sink(sink):raise ValueError('Hyperconnect only supports AirPlay speaker names containing robi.')
     options=rpc('Settings.GetSettings',level='expert',filter={'section':'system','category':'audio'}).get('settings',[])
     outputs=next((s.get('options',[]) for s in options if s['id']=='audiooutput.audiodevice'),[])
-    output=next((o['value'] for o in outputs if o['value']=='PULSE:'+name),None)
+    default=next((o['value'] for o in outputs if o['value'].upper()=='PULSE:DEFAULT'),None)
+    output=default if hyperconnect_sink(sink) else None
+    if output is None:output=next((o['value'] for o in outputs if o['value']=='PULSE:'+name),None)
     if output is None:output=next((o['value'] for o in outputs if o['value'].upper()=='PULSE:DEFAULT'),None)
     if output is None:raise ValueError('Kodi must use the desktop PulseAudio/PipeWire backend for shared Bluetooth, Wi-Fi and browser audio.')
     values={'audiooutput.audiodevice':output,'audiooutput.passthrough':False,'audiooutput.channels':1}
     old={k:rpc('Settings.GetSettingValue',setting=k)['value'] for k in values};changed=[]
     try:
         for key,value in values.items():set_setting(key,value);changed.append(key)
-        route_desktop(sink);audible_volume();save_audio_profile(sink=name)
+        route_desktop(sink);audible_volume();save_audio_profile(sink=name,hyperconnect_identity=receiver_identity(sink) if hyperconnect_sink(sink) else '')
     except Exception:
         for key in reversed(changed):set_setting(key,old[key])
         raise

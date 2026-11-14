@@ -118,8 +118,17 @@ $('#remote-check').onclick=async()=>{const button=$('#remote-check');button.disa
 $('#remote-copy').onclick=async()=>{try{await navigator.clipboard.writeText(remoteAddress);toast('Address copied');}catch(e){toast('Select and copy the address shown above.');}};
 
 async function airplayStatus(){try{const state=await api('/api/status');const tv=state.tv||{};const receiver=tv.airplay||{};$('#airplay-status').textContent=!tv.online?'TV service offline. Start Kodi on your Pi.':receiver.error||tv.error||(!receiver.installed?'Receiver not installed. Open installation instructions below.':receiver.active?'An Apple device is connected.':receiver.running?'Discoverable · choose Hyperdrive on your Apple device.':receiver.enabled?'Starting discovery…':'Discovery disabled.');$('#airplay-code').textContent=tv.online&&receiver.pin?'Pairing requested · code: '+receiver.pin:'';
-const select=$('#speaker-output');if(document.activeElement!==select&&!speakerDirty){const audio=tv.audio||{};select.innerHTML='<option value="">Choose a connected speaker</option>'+(audio.outputs||[]).map(d=>'<option value="'+escapeHTML(d.name)+'">'+escapeHTML(d.kind+' · '+d.label)+'</option>').join('');select.value=audio.selected_output||'';}
-}catch(e){$('#airplay-status').textContent='Receiver status unavailable';}}
+const audio=tv.audio||{};
+for(const [id,wireless,dirty] of [['speaker',false,speakerDirty],['hyperconnect',true,hyperconnectDirty]]){
+ const select=$('#'+id+'-output');const devices=(audio.outputs||[]).filter(d=>(d.kind==='Hyperconnect')===wireless);
+ if(document.activeElement!==select&&!dirty){select.innerHTML='<option value="">'+(wireless?'Choose Robi':'Choose a connected speaker')+'</option>'+devices.map(d=>'<option value="'+escapeHTML(d.name)+'">'+escapeHTML(wireless?d.label:d.kind+' · '+d.label)+'</option>').join('');select.value=audio.selected_output||'';}
+ if(wireless){const current=devices.find(d=>d.name===audio.selected_output);$('#hyperconnect-status').textContent=!tv.online?'Start Kodi on the Pi to discover speakers.':tv.error||(!devices.length?'No Robi speakers found. Check power, network and setup below.':current?'Selected output: '+current.label+' · playback is not verified.':'Robi speakers available. Choose one to send Pi audio.');$('#hyperconnect-save').disabled=!tv.online||!devices.length;}
+}
+}catch(e){$('#airplay-status').textContent='Receiver status unavailable';$('#hyperconnect-status').textContent='Speaker discovery unavailable: '+e.message;}}
+let hyperconnectDirty=false;
+$('#hyperconnect-output').onchange=()=>hyperconnectDirty=true;
+$('#hyperconnect-save').onclick=async()=>{try{const value=$('#hyperconnect-output').value;if(!value)throw Error('Choose a Robi speaker first.');await api('/api/tv/control',{action:'audio_output',value});hyperconnectDirty=false;$('#hyperconnect-status').textContent='Output change requested. Waiting for Kodi…';}catch(e){$('#hyperconnect-status').textContent=e.message;}};
+
 let speakerDirty=false;
 $('#speaker-output').onchange=()=>speakerDirty=true;
 $('#speaker-save').onclick=async()=>{try{if(!$('#speaker-output').value)throw Error('Choose a connected speaker first.');await api('/api/tv/control',{action:'audio_output',value:$('#speaker-output').value});speakerDirty=false;$('#speaker-status').textContent='Speaker change requested. Check the TV for any error.';}catch(e){$('#speaker-status').textContent=e.message;}};

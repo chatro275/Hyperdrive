@@ -204,3 +204,50 @@ class AirPlayTests(unittest.TestCase):
         receiver.process.poll.return_value=1;receiver.process.returncode=1;receiver.active=True
         receiver.status()
         self.module.xbmc.executebuiltin.assert_called_with('RunScript(script.hyperdrive)')
+
+class HyperconnectTests(unittest.TestCase):
+    setUp=AudioControlsTests.setUp
+    def sink(self,label='2C1068203FFD@Robi',name='raop_sink.robi.192.168.86.59.5000'):
+        return {'name':name,'description':label,'properties':{'node.description':label,'sess.media':'raop'}}
+    def test_filter_uses_advertised_name_not_host_or_local_description(self):
+        sinks=[self.sink(),self.sink('Bedroom rObI','raop_sink.other'),self.sink('MacBook','raop_sink.robi.local'),
+               {'name':'alsa_output.usb','description':'Robi USB','properties':{}},self.sink('Kitchen','raop_sink.kitchen')]
+        with patch.object(self.module,'desktop_sinks',return_value=sinks):devices=self.module.output_devices()
+        self.assertEqual([d['label'] for d in devices],['Robi','Bedroom rObI','Robi USB'])
+        self.assertEqual([d['kind'] for d in devices],['Hyperconnect','Hyperconnect','Speaker / system'])
+    def test_authoritative_advertisement_overrides_description(self):
+        sink=self.sink();sink['properties']['raop.name']='123@MacBook'
+        self.assertFalse(self.module.hyperconnect_sink(sink))
+    def test_non_robi_rejected_even_when_requested_directly(self):
+        sink=self.sink('MacBook')
+        with patch.object(self.module,'desktop_sinks',return_value=[sink]):
+            with self.assertRaisesRegex(ValueError,'containing robi'):self.module.select_output(sink['name'])
+        self.assertFalse(self.calls)
+    def test_network_change_resolves_saved_service_identity(self):
+        sink=self.sink(name='raop_sink.newaddress')
+        self.module.audio_profile.return_value.read_text.return_value=json.dumps({'sink':'raop_sink.old','hyperconnect_identity':sink['description']})
+        with patch.object(self.module,'desktop_sinks',return_value=[sink]),patch.object(self.module,'save_audio_profile') as save:
+            self.assertEqual(self.module.saved_output_sink(),sink)
+        save.assert_called_once_with(sink=sink['name'])
+    def test_duplicate_identity_requires_selection(self):
+        sink=self.sink();self.module.audio_profile.return_value.read_text.return_value=json.dumps({'sink':sink['name'],'hyperconnect_identity':sink['description']})
+        with patch.object(self.module,'desktop_sinks',return_value=[sink,self.sink(name='raop_sink.duplicate')]):
+            with self.assertRaisesRegex(ValueError,'ambiguous'):self.module.saved_output_sink()
+    def test_selection_uses_desktop_stereo_and_saves_identity(self):
+        sink=self.sink();original=self.module.rpc
+        def rpc(method,**kwargs):
+            if method=='Settings.GetSettings':return {'settings':[{'id':'audiooutput.audiodevice','options':[{'value':'PULSE:default'}]}]}
+            return original(method,**kwargs)
+        with patch.object(self.module,'desktop_sinks',return_value=[sink]),patch.object(self.module,'rpc',side_effect=rpc),patch.object(self.module,'route_desktop') as route,patch.object(self.module,'save_audio_profile') as save:
+            self.module.select_output(sink['name'])
+        route.assert_called_once_with(sink);save.assert_called_once_with(sink=sink['name'],hyperconnect_identity=sink['description'])
+        self.assertEqual(self.values['audiooutput.audiodevice'],'PULSE:default');self.assertFalse(self.values['audiooutput.passthrough']);self.assertEqual(self.values['audiooutput.channels'],1)
+
+    def test_tv_entrypoint_opens_hyperconnect_menu(self):
+        import runpy
+        controls=types.SimpleNamespace(**{name:Mock() for name in ('audio_menu','power_menu','update_menu','hdmi_setup','test_sound','voice_results','airplay_menu','hyperconnect_menu')})
+        kodi=types.SimpleNamespace(Window=Mock())
+        gui=types.SimpleNamespace(WindowXML=object,Window=Mock(),Dialog=Mock())
+        with patch.dict(sys.modules,{'xbmc':kodi,'xbmcgui':gui,'xbmcaddon':types.SimpleNamespace(),'common':types.SimpleNamespace(api=Mock()),'controls':controls}),patch.object(sys,'argv',['default.py','hyperconnect']):
+            runpy.run_path(str(Path(__file__).resolve().parent.parent/'kodi/script.frame/default.py'))
+        controls.hyperconnect_menu.assert_called_once()

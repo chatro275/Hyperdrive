@@ -324,3 +324,21 @@ Automated checks cover routing, pairing/disconnect events, stream bytes and capt
 Recognise UxPlay's video-socket-closed message and recover from explicit session endings even when the connected event was missed. Return to Hyperdrive if an active receiver exits, and keep discovery available after disconnects. Ordinary discovery probes do not interrupt Kodi. Receiver output is decoded with replacement for invalid UTF-8 so a malformed log line cannot stop lifecycle monitoring. These changes target freezing after disconnect, not decoder stalls during playback. Hardware verification is still required.
 
 Kodi API errors now include the server-provided reason rather than only the HTTP status.
+
+## Hyperconnect (2.12.0)
+
+Hyperconnect is AirPlay sending to Robi speakers, using the existing PipeWire RAOP sender. Choose Hyperconnect on the Hyperdrive TV home screen, in Frame's Audio menu, or in dashboard Settings → Sound & power. Only AirPlay receivers whose advertised name contains `robi` (case-insensitive) are listed; the same rule is enforced when selecting an output. HDMI and Bluetooth remain available separately. Name filtering is not authentication.
+
+After updating and restarting, configure discovery once on the **Hyperdrive Pi**, as the desktop user:
+
+```sh
+cd ~/HyperMedia
+bash scripts/install-pi.sh --wireless-audio
+sudo reboot
+```
+
+This updates Hyperdrive's existing RAOP discovery configuration with a Robi-only rule. It requires an active PipeWire desktop, its PulseAudio compatibility service, and distribution RAOP modules. It does not migrate PulseAudio systems or configure Robi. Wait about ten seconds after Kodi starts for speakers to appear. The same LAN must allow mDNS discovery and AirPlay traffic. No fixed address, port, password or HTTP management token is stored. A previously saved receiver is matched by advertised service identity when routing a new stream, so an IP change need not require selection again. Ambiguous duplicate identities require manual selection. Selecting HDMI clears the saved Hyperconnect identity.
+
+Output selection uses stereo PCM, disables passthrough and selects/unmutes the desktop sink. Kodi volume and Robi's master volume are independent and cumulative; this release does not call Robi's management HTTP API or modify its EQ. It does not guarantee AirPlay 2, multiroom, or automatic movie lip-sync. Test a movie's dialogue, seek/pause/resume and reconnect on the physical devices; the selected-output indicator confirms routing configuration, not audible playback. If Robi disappears, choose HDMI explicitly; there is no automatic speaker fallback.
+
+Verified receiver advertisement supplied by the owner: Shairport Sync 4.3.7, RAOP stereo S16/44100, TCP/UDP, no AirPlay password. Mac-to-Robi playback was confirmed by the owner; Hyperdrive-to-Robi playback still needs hardware validation. Discovery configuration follows https://docs.pipewire.org/page_module_raop_discover.html.
