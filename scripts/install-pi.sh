@@ -82,12 +82,16 @@ sudo install -m 644 "$frame_unit" /etc/systemd/system/frame.service
 sudo systemctl daemon-reload
 sudo systemctl enable frame.service
 sudo systemctl restart frame.service
-cat > "$HOME/.config/autostart/frame-kodi.desktop" <<'EOF'
+kodi_audio_option=""
+if kodi --help 2>&1 | grep -q 'Available audio backends:.*pulseaudio\|Available audio backends are:.*pulseaudio'; then
+  kodi_audio_option=" --audio-backend=pulseaudio"
+fi
+cat > "$HOME/.config/autostart/frame-kodi.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Hyperdrive
 Comment=Start Hyperdrive at desktop login
-Exec=kodi --standalone
+Exec=kodi --standalone${kodi_audio_option}
 Terminal=false
 X-GNOME-Autostart-enabled=true
 EOF

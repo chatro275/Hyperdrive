@@ -19,7 +19,8 @@ def audio_status():
         state['tracks'] = details.get('audiostreams', [])
         state['track'] = details.get('currentaudiostream', {}).get('index', -1)
     state['output'] = rpc('Settings.GetSettingValue', setting='audiooutput.audiodevice').get('value', '')
-    state['passthrough'] = rpc('Settings.GetSettingValue', setting='audiooutput.passthrough').get('value', False)
+    try:state['passthrough'] = rpc('Settings.GetSettingValue', setting='audiooutput.passthrough').get('value', False)
+    except ValueError:state['passthrough'] = False  # Some PCM-only backends omit this setting.
     return state
 
 def power_status():
@@ -129,11 +130,11 @@ def hdmi_setup():
     output=next((s for s in settings if s['id']=='audiooutput.audiodevice'),{})
     options=output.get('options',[])
     devices=[dict(o) for o in options if 'hdmi' in (str(o.get('label',''))+' '+str(o.get('value',''))).lower()]
-    pulse_default=next((o for o in options if str(o.get('value','')).upper()=='PULSE:DEFAULT'),None)
+    pulse_default=next((o for o in options if str(o.get('value','')).split('|',1)[0].upper()=='PULSE:DEFAULT'),None)
     sinks=desktop_sinks() if any(str(o.get('value','')).upper().startswith('PULSE:') for o in options) else []
     for sink in sinks:
         if 'hdmi' not in (sink.get('name','')+' '+sink.get('description','')).lower():continue
-        device=next((d for d in devices if d['value']=='PULSE:'+sink['name']),None)
+        device=next((d for d in devices if d['value'].split('|',1)[0]=='PULSE:'+sink['name']),None)
         if device is not None:device['sink']=sink
         elif pulse_default:
             devices.append({'label':sink.get('description',sink['name'])+' (Pi desktop)', 'value':pulse_default['value'], 'sink':sink})
@@ -144,6 +145,7 @@ def hdmi_setup():
     if choice<0:return
     if not xbmcgui.Dialog().yesno('Fix HDMI sound?', 'Use this HDMI output with stereo PCM and unmute audio? Zero volume will be raised to 50%. For desktop audio, this also selects and unmutes the Pi HDMI output.'):return
     values={'audiooutput.audiodevice':devices[choice]['value'], 'audiooutput.passthrough':False,'audiooutput.channels':1}
+    if not any(s.get('id')=='audiooutput.passthrough' for s in settings):values.pop('audiooutput.passthrough')
     old={key:rpc('Settings.GetSettingValue',setting=key)['value'] for key in values}
     changed=[]
     try:
@@ -301,12 +303,13 @@ def select_output(name):
     if airplay_sink(sink) and not hyperconnect_sink(sink):raise ValueError('Hyperconnect only supports AirPlay speaker names containing robi.')
     options=rpc('Settings.GetSettings',level='expert',filter={'section':'system','category':'audio'}).get('settings',[])
     outputs=next((s.get('options',[]) for s in options if s['id']=='audiooutput.audiodevice'),[])
-    default=next((o['value'] for o in outputs if o['value'].upper()=='PULSE:DEFAULT'),None)
+    default=next((o['value'] for o in outputs if o['value'].split('|',1)[0].upper()=='PULSE:DEFAULT'),None)
     output=default if hyperconnect_sink(sink) else None
-    if output is None:output=next((o['value'] for o in outputs if o['value']=='PULSE:'+name),None)
-    if output is None:output=next((o['value'] for o in outputs if o['value'].upper()=='PULSE:DEFAULT'),None)
+    if output is None:output=next((o['value'] for o in outputs if o['value'].split('|',1)[0]=='PULSE:'+name),None)
+    if output is None:output=next((o['value'] for o in outputs if o['value'].split('|',1)[0].upper()=='PULSE:DEFAULT'),None)
     if output is None:raise ValueError('Kodi must use the desktop PulseAudio/PipeWire backend for shared Bluetooth, Wi-Fi and browser audio.')
     values={'audiooutput.audiodevice':output,'audiooutput.passthrough':False,'audiooutput.channels':1}
+    if not any(s.get('id')=='audiooutput.passthrough' for s in options):values.pop('audiooutput.passthrough')
     old={k:rpc('Settings.GetSettingValue',setting=k)['value'] for k in values};changed=[]
     try:
         for key,value in values.items():set_setting(key,value);changed.append(key)

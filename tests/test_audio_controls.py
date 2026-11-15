@@ -9,7 +9,7 @@ class AudioControlsTests(unittest.TestCase):
         self.fail=None
         def call(raw):
             request=json.loads(raw);method=request['method'];params=request['params'];self.calls.append((method,params))
-            if method=='Settings.GetSettings':result={'settings':[{'id':'audiooutput.audiodevice','options':[{'label':'HDMI TV','value':'ALSA:hdmi'}]}]}
+            if method=='Settings.GetSettings':result={'settings':[{'id':'audiooutput.audiodevice','options':[{'label':'HDMI TV','value':'ALSA:hdmi'}]},{'id':'audiooutput.passthrough'}]}
             elif method=='Settings.GetSettingValue':result={'value':self.values[params['setting']]}
             elif method=='Settings.SetSettingValue':
                 result=params['setting']!=self.fail
@@ -62,7 +62,7 @@ class AudioControlsTests(unittest.TestCase):
         original=self.module.rpc
         def rpc(method, **params):
             if method=='Settings.GetSettings':
-                return {'settings':[{'id':'audiooutput.audiodevice','options':[{'label':'Default','value':'PULSE:default'}]}]}
+                return {'settings':[{'id':'audiooutput.audiodevice','options':[{'label':'Default','value':'PULSE:default'}]},{'id':'audiooutput.passthrough'}]}
             return original(method, **params)
         sink={'name':'alsa_output.hdmi','description':'HDMI TV'}
         with patch.object(self.module,'rpc',side_effect=rpc), patch.object(self.module,'desktop_sinks',return_value=[sink]), patch.object(self.module,'route_desktop') as route:
@@ -236,7 +236,7 @@ class HyperconnectTests(unittest.TestCase):
     def test_selection_uses_desktop_stereo_and_saves_identity(self):
         sink=self.sink();original=self.module.rpc
         def rpc(method,**kwargs):
-            if method=='Settings.GetSettings':return {'settings':[{'id':'audiooutput.audiodevice','options':[{'value':'PULSE:default'}]}]}
+            if method=='Settings.GetSettings':return {'settings':[{'id':'audiooutput.audiodevice','options':[{'value':'PULSE:default'}]},{'id':'audiooutput.passthrough'}]}
             return original(method,**kwargs)
         with patch.object(self.module,'desktop_sinks',return_value=[sink]),patch.object(self.module,'rpc',side_effect=rpc),patch.object(self.module,'route_desktop') as route,patch.object(self.module,'save_audio_profile') as save:
             self.module.select_output(sink['name'])
@@ -251,3 +251,23 @@ class HyperconnectTests(unittest.TestCase):
         with patch.dict(sys.modules,{'xbmc':kodi,'xbmcgui':gui,'xbmcaddon':types.SimpleNamespace(),'common':types.SimpleNamespace(api=Mock()),'controls':controls}),patch.object(sys,'argv',['default.py','hyperconnect']):
             runpy.run_path(str(Path(__file__).resolve().parent.parent/'kodi/script.frame/default.py'))
         controls.hyperconnect_menu.assert_called_once()
+
+    def test_decorated_pulse_output_and_missing_passthrough(self):
+        sink=self.sink();original=self.module.rpc
+        output='PULSE:Default|Default Output Device (PULSEAUDIO)'
+        def rpc(method,**kwargs):
+            if method=='Settings.GetSettings':return {'settings':[{'id':'audiooutput.audiodevice','options':[{'value':output}]}]}
+            if method=='Settings.GetSettingValue' and kwargs['setting']=='audiooutput.passthrough':raise ValueError('Invalid params.')
+            return original(method,**kwargs)
+        with patch.object(self.module,'desktop_sinks',return_value=[sink]),patch.object(self.module,'rpc',side_effect=rpc),patch.object(self.module,'route_desktop'),patch.object(self.module,'save_audio_profile'):
+            self.module.select_output(sink['name'])
+        self.assertEqual(self.values['audiooutput.audiodevice'],output)
+        self.assertFalse(any(m=='Settings.SetSettingValue' and p['setting']=='audiooutput.passthrough' for m,p in self.calls))
+    def test_missing_passthrough_does_not_hide_audio_status(self):
+        def rpc(method,**kwargs):
+            if method=='Application.GetProperties':return {'volume':50,'muted':False}
+            if method=='Player.GetActivePlayers':return []
+            if kwargs.get('setting')=='audiooutput.passthrough':raise ValueError('Invalid params.')
+            return {'value':'PULSE:Default|Default Output Device (PULSEAUDIO)'}
+        with patch.object(self.module,'rpc',side_effect=rpc):state=self.module.audio_status()
+        self.assertEqual(state['volume'],50);self.assertFalse(state['passthrough'])
